@@ -10,7 +10,8 @@ import torch
 import torch.nn as nn
 import re
 import os
-from transformers import PreTrainedTokenizer, DataCollatorWithPadding, EsmModel, EsmConfig, EsmTokenizer, LlamaTokenizer, LlamaConfig, AutoTokenizer, Qwen2ForCausalLM
+from transformers import PreTrainedTokenizer, DataCollatorWithPadding, EsmModel, EsmConfig, EsmTokenizer, LlamaTokenizer, LlamaConfig, AutoTokenizer, Qwen2ForCausalLM, AutoModelForCausalLM
+from peft import get_peft_model, LoraConfig, TaskType
 
 from open_biomed.data import Molecule, Protein, Text
 from open_biomed.models.base_model import BaseModel
@@ -33,13 +34,20 @@ class BioMedGPTR1Featurizer(Featurizer):
         super().__init__()
         self.molecule_featurizer = MolGraphFeaturizer({"name": "BaseGNN"})
         esm_tokenizer = EsmTokenizer.from_pretrained(esm_tokenizer)
-        self.protein_featurizer = ProteinTransformersFeaturizer(esm_tokenizer, protein_max_length)
+        self.protein_featurizer = ProteinTransformersFeaturizer(esm_tokenizer, protein_max_length, add_special_tokens=False)
         self.llm_tokenizer = AutoTokenizer.from_pretrained(llama_tokenizer, model_max_length=text_max_length, truncation=True, truncation_side="left")
 
         self.molecule_max_atoms = molecule_max_atoms
     
-    def __call__(self, molecule: List[Molecule]=[], protein: List[Protein]=[], text: Text=None) -> Dict[str, Any]:
+    def __call__(self, molecule: List[Molecule]=[], protein: List[Protein]=[], text: Text=None, label: Text=None) -> Dict[str, Any]:
         text = text.str
+        label = label.str
+        label_tokens = self.llm_tokenizer(
+                label,
+                return_tensors='pt',
+                add_special_tokens=False
+            ).input_ids
+
         featurized_molecule = [self.molecule_featurizer(mol) for mol in molecule]
         featurized_protein = [self.protein_featurizer(prot) for prot in protein] 
         cur_mol, cur_prot = 0, 0
@@ -53,15 +61,15 @@ class BioMedGPTR1Featurizer(Featurizer):
                 p_text[j],
                 return_tensors='pt',
                 add_special_tokens=False
-            ))
+            ).input_ids)
             if j < len(spec_tokens):
                 if spec_tokens[j] == "<moleculeHere>":
-                    all_tokens.append(-1023 * torch.ones(min(molecule[cur_mol].get_num_atoms(), self.molecule_max_atoms)))
+                    all_tokens.append(-1023 * torch.ones(1,min(molecule[cur_mol].get_num_atoms(), self.molecule_max_atoms)))
                     cur_mol += 1
                 elif spec_tokens[j] == "<proteinHere>":
-                    all_tokens.append(-1024 * torch.ones(len(protein[cur_prot].sequence)))
+                    all_tokens.append(-1024 * torch.ones(1,len(protein[cur_prot].sequence)))
                     cur_prot += 1
-        all_tokens = torch.cat(all_tokens)
+        all_tokens = torch.cat(all_tokens, dim=1)
         return {
             "molecule": featurized_molecule,
             "protein": featurized_protein,
@@ -69,10 +77,14 @@ class BioMedGPTR1Featurizer(Featurizer):
                 "input_ids": all_tokens,
                 "attention_mask": torch.ones_like(all_tokens)
             },
+            "label": {
+                "input_ids": label_tokens,
+                "attention_mask": torch.ones_like(label_tokens)
+            }
         }
 
     def get_attrs(self) -> List[str]:
-        return ["molecule", "protein", "text"]
+        return ["molecule", "protein", "text", "label"]
 
 class BioMedGPTR1Collator(Collator):
     def __init__(self, 
@@ -87,19 +99,26 @@ class BioMedGPTR1Collator(Collator):
 
         self.molecule_max_atoms = molecule_max_atoms
 
-    def __call__(self, molecule: List[List[Featurized[Molecule]]], protein: List[List[Featurized[Protein]]], text: List[Featurized[Text]]) -> Dict[str, Featurized[Any]]:
+    # def __call__(self, molecule: List[List[Featurized[Molecule]]], protein: List[List[Featurized[Protein]]], text: List[Featurized[Text]], label: List[Featurized[Text]]) -> Dict[str, Featurized[Any]]:
+    def __call__(self, sample) -> Dict[str, Featurized[Any]]:
+        
+        # TODO: batchsize > 1 sample[0]?
+        molecule = sample[0]['molecule']
+        protein = sample[0]['protein']
+        text = sample[0]['text']
+        label = sample[0]['label']
+
         collated = {}
         flatted_molecule, batch_molecule = [], []
         for i, mol in enumerate(molecule):
-            for elem in mol:
-                flatted_molecule.append(elem)
-                if elem.x.shape[0] > self.molecule_max_atoms:
-                    batch = -1 * torch.ones(elem.x.shape[0], dtype=torch.long)
-                    perm = np.random.permutation(elem.x.shape[0])
-                    batch[perm[:self.molecule_max_atoms]] = i
-                else:
-                    batch = i * torch.ones(elem.x.shape[0], dtype=torch.long)
-                batch_molecule.append(batch)
+            flatted_molecule.append(mol)
+            if mol.x.shape[0] > self.molecule_max_atoms:
+                batch = -1 * torch.ones(mol.x.shape[0], dtype=torch.long)
+                perm = np.random.permutation(mol.x.shape[0])
+                batch[perm[:self.molecule_max_atoms]] = i
+            else:
+                batch = i * torch.ones(mol.x.shape[0], dtype=torch.long)
+            batch_molecule.append(batch)
         if len(flatted_molecule) > 0:
             collated_molecule = self.molecule_collator(flatted_molecule)
             collated_molecule["global_batch"] = torch.cat(batch_molecule, dim=-1)
@@ -107,15 +126,15 @@ class BioMedGPTR1Collator(Collator):
         
         flatted_protein, batch_protein = [], []
         for i, prot in enumerate(protein):
-            for elem in prot:
-                flatted_protein.append(elem)
-                batch_protein.append(torch.ones(elem.input_ids.shape[0], dtype=torch.long) * i)
-        if len(collated_protein) > 0:
+            flatted_protein.append(prot)
+            batch_protein.append(torch.ones(len(prot.input_ids), dtype=torch.long) * i)
+        if len(flatted_protein) > 0:
             collated_protein = self.protein_collator(flatted_protein)
             collated_protein["global_batch"] = torch.cat(batch_protein, dim=-1)
             collated["protein"] = collated_protein
 
         collated["text"] = self.text_collator(text)
+        collated["label"] = [self.text_collator(label)]
 
         return collated
 
@@ -131,28 +150,61 @@ class BioMedGPTR1(BaseModel):
             drop_ratio=config.molecule.drop_ratio,
             JK="last",
         )
+        if getattr(config, 'is_train', False):
+            self.mol_structure_encoder.load_state_dict(torch.load(config.molecule.model_name_or_path, map_location="cpu"), strict=True)
+        if getattr(config, 'freeze_mol_structure_encoder', True):
+            logging.info("freeze molecule structure encoder")
+            for name, param in self.mol_structure_encoder.named_parameters():
+                param.requires_grad = False
 
         # load protein structure encoder
         self.prot_tokenizer = EsmTokenizer.from_pretrained(config.protein.model_name_or_path)
-        self.prot_structure_config = EsmConfig.from_json_file(os.path.join(config.protein.model_name_or_path, "config.json"))
-        self.prot_structure_encoder = EsmModel(self.prot_structure_config)
+        if getattr(config, 'is_train', False):
+            self.prot_structure_encoder = EsmModel.from_pretrained(config.protein.model_name_or_path, device_map='auto')
+        else:
+            self.prot_structure_config = EsmConfig.from_json_file(os.path.join(config.protein.model_name_or_path, "config.json"))
+            self.prot_structure_encoder = EsmModel(self.prot_structure_config)
         if config.protein.use_float16:
             self.prot_structure_encoder = self.prot_structure_encoder.half()
+        if getattr(config, 'freeze_prot_structure_encoder', True):
+            logging.info("freeze protein structure encoder")
+            for name, param in self.prot_structure_encoder.named_parameters():
+                param.requires_grad = False
 
         # load llm
         self.llm_tokenizer = AutoTokenizer.from_pretrained(config.llm.model_name_or_path, use_fast=False, truncation_side="left")
         logging.info("loading llm")
-        self.llm_config = LlamaConfig.from_json_file(os.path.join(config.llm.model_name_or_path, "config.json"))
-        self.llm = Qwen2ForCausalLM(self.llm_config)
+        if getattr(config, 'is_train', False):
+            self.llm = AutoModelForCausalLM.from_pretrained(config.llm.model_name_or_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, device_map='auto')
+        else:
+            self.llm_config = LlamaConfig.from_json_file(os.path.join(config.llm.model_name_or_path, "config.json"))
+            self.llm = Qwen2ForCausalLM(self.llm_config)
         if config.llm.use_float16:
             self.llm = self.llm.half()
         self.llm.resize_token_embeddings(len(self.llm_tokenizer))
+        if getattr(config, 'freeze_llm', True):
+            logging.info("freeze llm")
+            for name, param in self.llm.named_parameters():
+                param.requires_grad = False
+        else:
+            logging.info("apply LoRA to llm")
+            lora_config = LoraConfig(
+                peft_type=TaskType.FEATURE_EXTRACTION, 
+                inference_mode=False, 
+                target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+                r=8,
+                lora_alpha=16,
+                lora_dropout=0.05)
+            self.llm = get_peft_model(self.llm, lora_config)
+            self.llm.print_trainable_parameters()
 
         self.proj_mol = nn.Linear(config.molecule.gin_hidden_dim, self.llm.config.hidden_size)
         self.proj_prot = nn.Linear(self.prot_structure_encoder.config.hidden_size, self.llm.config.hidden_size)
 
         self.featurizer = BioMedGPTR1Featurizer(esm_tokenizer=config.protein.model_name_or_path, llama_tokenizer=config.llm.model_name_or_path)
         self.collator = BioMedGPTR1Collator(esm_tokenizer=self.prot_tokenizer, llama_tokenizer=self.llm_tokenizer)
+
+        self._add_task()
 
     def maybe_autocast(self, device=torch.device("cuda:0"), dtype=torch.float16):
         # if on cpu, don't use autocast
@@ -173,7 +225,8 @@ class BioMedGPTR1(BaseModel):
         state_dict = torch.load(open(os.path.join(model_name_or_path, "pytorch_model.bin"), "rb"), map_location="cpu")
         model.load_state_dict(state_dict)
         model = model.to(device)
-        model.eval()
+        if not getattr(config, 'is_train', False):
+            model.eval()
         return model
 
     def add_padding(self, 
@@ -225,9 +278,9 @@ class BioMedGPTR1(BaseModel):
             return torch.cat(wrapped_embeds, dim=0), torch.cat(wrapped_attention_mask, dim=0)
 
     def get_input_embeddings(self,
-        molecule: Optional[Featurized[Molecule]], 
-        protein: Optional[Featurized[Protein]], 
         text: Featurized[Text],
+        molecule: Optional[Featurized[Molecule]]=None, 
+        protein: Optional[Featurized[Protein]]=None, 
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         device = text.input_ids.device
         batch_size = text.input_ids.shape[0]
@@ -240,9 +293,9 @@ class BioMedGPTR1(BaseModel):
             
             if protein is not None:
                 prot_feats = []
-                for prot in protein:
-                    h = self.prot_structure_encoder(**prot).last_hidden_state
-                    prot_feats.append(self.proj_prot(h))
+                prot = dict(input_ids=protein['input_ids'], attention_mask=protein['attention_mask'])               
+                h = self.prot_structure_encoder(**prot).last_hidden_state
+                prot_feats.append(self.proj_prot(h))
         
         wrapped_embeds, wrapped_attention_mask = [], []
         for i in range(batch_size):
@@ -251,39 +304,43 @@ class BioMedGPTR1(BaseModel):
             text_input = text.input_ids[i]
             text_input[mol_pos] = 1024
             text_input[prot_pos] = 1024
-            text_embeds = self.llm.get_input_embeddings()(text_input)
+            text_embeds = self.llm.get_input_embeddings()(text_input.long())
             if molecule is not None:
-                text_embeds[:, mol_pos] = mol_feats[torch.where(molecule.global_batch == i)]
+                text_embeds[mol_pos] = mol_feats[torch.where(molecule.global_batch == i)]
             if protein is not None:
-                cur_prot_feats = [prot_feats[j] for j in torch.where(protein.global_batch == i)]
+                cur_prot_feats = [prot_feats[i][:, j] for j in torch.where(protein.global_batch == i)]
                 cur_prot_feats = torch.cat(cur_prot_feats, dim=1)
-                text_embeds[:, prot_pos] = cur_prot_feats
+                text_embeds[prot_pos] = cur_prot_feats[0]
 
-            wrapped_embeds.append(torch.cat(text_embeds, dim=1))
-            wrapped_attention_mask.append(torch.ones(wrapped_embeds[-1].shape[:-1]), dtype=torch.long, device=device)
+            # wrapped_embeds.append(torch.cat(text_embeds, dim=1))
+            wrapped_embeds.append(torch.unsqueeze(text_embeds, dim=0))
+            wrapped_attention_mask.append(torch.ones(wrapped_embeds[-1].shape[:-1]).to(device))
         
         return wrapped_embeds, wrapped_attention_mask
 
     def forward(self,
-        molecule: Optional[Featurized[Molecule]],
-        protein: Optional[Featurized[Protein]],
         text: Featurized[Text],
-        labels: Featurized[Text],
+        label: Featurized[Text],
+        molecule: Optional[Featurized[Molecule]]=None,
+        protein: Optional[Featurized[Protein]]=None,
     ) -> Dict[str, torch.Tensor]:
         with self.maybe_autocast():
-            inputs_embeds, inputs_attention_mask = self.get_input_embeddings(molecule, protein, text)
+            inputs_embeds, inputs_attention_mask = self.get_input_embeddings(text, molecule, protein)
             
             wrapped_embeds, wrapped_attention_mask, wrapped_targets = [], [], []
             for i in range(len(inputs_embeds)):
-                eos_token = torch.ones((1, 1), dtype=labels[i].input_ids.dtype, device=labels[i].input_ids.device)
-                labels[i].input_ids = torch.cat([labels[i].input_ids, eos_token * self.llm_tokenizer.eos_token_id], dim=1)
-                labels[i].attention_mask = torch.cat([labels[i].attention_mask, eos_token], dim=1)
-                output_embeds = self.llm.get_input_embeddings()(labels[i].input_ids)
+                eos_token = torch.ones((1, 1), dtype=label[i].input_ids.dtype, device=label[i].input_ids.device)
+                label[i].input_ids = torch.cat([label[i].input_ids, eos_token * self.llm_tokenizer.eos_token_id], dim=1)
+                label[i].attention_mask = torch.cat([label[i].attention_mask, eos_token], dim=1)
+                output_embeds = self.llm.get_input_embeddings()(label[i].input_ids)
+                # print (inputs_embeds[i].shape, label[i].input_ids.shape)
+                # import pdb
+                # pdb.set_trace()
                 wrapped_embeds.append(torch.cat([inputs_embeds[i], output_embeds], dim=1))
-                wrapped_attention_mask.append(torch.cat([inputs_attention_mask[i], labels[i].attention_mask], dim=1))
+                wrapped_attention_mask.append(torch.cat([inputs_attention_mask[i], label[i].attention_mask], dim=1))
                 # do not apply loss to the padding
-                targets = labels[i].input_ids.masked_fill(
-                    labels[i].input_ids == self.llm_tokenizer.pad_token_id, -100
+                targets = label[i].input_ids.masked_fill(
+                    label[i].input_ids == self.llm_tokenizer.pad_token_id, -100
                 )
                 # do not apply loss to the text inputs (i.e., instruction)
                 empty_targets = torch.ones(inputs_attention_mask[i].shape, dtype=torch.long).to(inputs_embeds[i].device).fill_(-100)
@@ -297,7 +354,15 @@ class BioMedGPTR1(BaseModel):
                 labels=targets,
                 return_dict=True
             )
-            return outputs.loss
+            return {"loss": outputs.loss}
+    
+    def _add_task(self) -> None:
+        self.supported_tasks["multimodal_question_answering"] = {
+            "forward_fn": self.forward,
+            "predict_fn": self.generate,
+            "featurizer": self.featurizer,
+            "collator": self.collator
+        }
 
     @torch.no_grad()
     def generate(self,

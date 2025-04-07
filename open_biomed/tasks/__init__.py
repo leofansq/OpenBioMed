@@ -7,6 +7,7 @@ from open_biomed.tasks.multi_modal_tasks.molecule_question_answering import Mole
 from open_biomed.tasks.multi_modal_tasks.protein_text_translation import TextBasedProteinGeneration
 from open_biomed.tasks.multi_modal_tasks.protein_question_answering import ProteinQA
 from open_biomed.tasks.multi_modal_tasks.mutation_text_translation import MutationExplanation, MutationEngineering
+from open_biomed.tasks.multi_modal_tasks.multimodal_question_answering import MultimodalQA
 from open_biomed.tasks.aidd_tasks.molecule_property_prediction import MoleculePropertyPrediction
 from open_biomed.tasks.aidd_tasks.protein_molecule_docking import PocketMoleculeDocking
 from open_biomed.tasks.aidd_tasks.structure_based_drug_design import StructureBasedDrugDesign
@@ -24,7 +25,8 @@ TASK_REGISTRY = {
     "structure_based_drug_design": StructureBasedDrugDesign,
     "mutation_explanation": MutationExplanation,
     "mutation_engineering": MutationEngineering,
-    "protein_folding": ProteinFolding
+    "protein_folding": ProteinFolding,
+    "multimodal_question_answering": MultimodalQA
 }
 
 def check_compatible(task_name: str, dataset_name: Optional[str], model_name: Optional[str]) -> None:

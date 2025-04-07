@@ -121,6 +121,8 @@ class TrainValPipeline(Pipeline):
             os.makedirs(val_output_dir, exist_ok=True)
         if not os.path.exists(test_output_dir):
             os.makedirs(test_output_dir, exist_ok=True)
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir, exist_ok=True)
         accounting_cfg = {
             "dir": accounting_dir,
             "project_name": project_name,

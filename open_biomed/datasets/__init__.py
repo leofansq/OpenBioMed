@@ -4,6 +4,7 @@ from open_biomed.datasets.text_guided_molecule_generation_dataset import CheBI20
 from open_biomed.datasets.protein_text_dataset import MolInstructionsForProteinDesign
 from open_biomed.datasets.molecule_question_answering import MQA
 from open_biomed.datasets.protein_question_answering import PQA
+from open_biomed.datasets.multimodal_question_answering import MultimodalQA
 
 from open_biomed.datasets.molecule_property_prediction_dataset import MoleculeNet
 
@@ -49,5 +50,9 @@ DATASET_REGISTRY = {
             "qm7": MoleculeNet,
             "qm8": MoleculeNet,
             "qm9": MoleculeNet
-        }
+        },
+    "multimodal_question_answering":
+        {
+            "biomedical_qa": MultimodalQA
+        },
 }
