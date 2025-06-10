@@ -278,7 +278,8 @@ class ReportGeneratorGeneral(Tool):
 
         self.llm = LLMReportGenerator(api_infos=api_infos, temperature=0.0)
         self.oss_warpper = Oss_Warpper()
-        self.email_server = EmailServer() 
+        self.email_server = EmailServer()
+        self.email_try_max = 3
         
     
     def print_usage(self) -> str:
@@ -288,13 +289,27 @@ class ReportGeneratorGeneral(Tool):
             'Outputs: a report for general task.'
         ])
     
-    async def _run_workflow(self, workflow: str, num_repeats: int):
+    async def _run_workflow(self, workflow: str, num_repeats: int, user_email: str):
         from open_biomed.core.workflow import Workflow, parse_frontend
 
         config_file = parse_frontend(workflow)
-        config = Config(config_file=config_file)
-        workflow = Workflow(config)
-        await workflow.run(num_repeats=num_repeats, context=open(f"{self.dir_path}/workflow_outputs.txt", "w"), tool_outputs=open(f"{self.dir_path}/workflow_tool_outputs.txt", "w"))
+        try:
+            config = Config(config_file=config_file)
+            workflow = Workflow(config)
+            await workflow.run(num_repeats=num_repeats, context=open(f"{self.dir_path}/workflow_outputs.txt", "w"), tool_outputs=open(f"{self.dir_path}/workflow_tool_outputs.txt", "w"))
+        except:
+            # Please ensure that your workflow can run successfully before submitting
+            for i in range(self.email_try_max):
+                is_email_success = self.email_server.send(user_email=user_email, \
+                                        subject=self.email_subject, \
+                                        body=config_file, \
+                                        timestamp=self.current_time)
+                if is_email_success:
+                    break
+                else:
+                    logging.info(f"[Email] Retrying...")
+                    self.email_server = EmailServer()
+
     
     def _gen_context(self, output_file):
         with open(output_file, "r") as f:
@@ -330,7 +345,7 @@ class ReportGeneratorGeneral(Tool):
     
     async def run(self, workflow: str, user_email: str, num_repeats: int) -> str:
         # Workflow
-        await self._run_workflow(workflow=workflow, num_repeats=num_repeats)
+        await self._run_workflow(workflow=workflow, num_repeats=num_repeats, user_email=user_email)
 
         # Report generation
         context = self._gen_context(output_file=f"{self.dir_path}/workflow_outputs.txt")       
@@ -344,11 +359,17 @@ class ReportGeneratorGeneral(Tool):
         self._oss_upload()
 
         # Email
-        self.email_server.send(user_email=user_email, subject=self.email_subject, body=self.email_body, attachment_path=f"{self.dir_path}/{self.email_subject}.zip")
+        for i in range(self.email_try_max):
+            is_email_success = self.email_server.send(user_email=user_email, subject=self.email_subject, body=self.email_body, attachment_path=f"{self.dir_path}/{self.email_subject}.zip", timestamp=self.current_time)
 
-        # Temporal files cleaning
-        if os.path.exists(self.dir_path):
-            shutil.rmtree(self.dir_path)
+            if is_email_success:
+                # Temporal files cleaning
+                if os.path.exists(self.dir_path):
+                    shutil.rmtree(self.dir_path)
+                break
+            else:
+                logging.info(f"[Email] Retrying...")
+                self.email_server = EmailServer()
 
         return resp
 
@@ -426,6 +447,10 @@ if __name__ == "__main__":
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
+
+    agent = ReportGeneratorSBDD()
+    asyncio.run(agent.run(workflow="", user_email="", num_repeats=5))
+
 
 
 
