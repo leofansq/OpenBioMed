@@ -1,0 +1,22 @@
+model:
+  name: graphmvp_regression
+  gin_hidden_dim: 300
+  gin_num_layers: 5
+  drop_ratio: 0.5
+  JK: last
+  gnn_type: gin
+  graph_pooling: mean
+  hf_model_name_or_path: /AIRvePFS/dair/yk-data/projects/OpenBioMed_luoyz/ckpts/gnn_ckpts/graphmvp/pretraining_model.pth
+  
+
+dataset:
+  batch_size_train: 32
+  batch_size_eval: 64
+
+train:
+  max_epochs: 100
+  batch_size: 32
+  ckpt_freq: 5
+
+evaluation:
+  batch_size: 64

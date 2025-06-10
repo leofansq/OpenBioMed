@@ -38,23 +38,39 @@ class MoleculePropertyPredictionEvalDataset(Dataset):
         super(MoleculePropertyPredictionEvalDataset, self).__init__()
         self.molecules, self.texts, self.labels = [], [], []
 
+    # @classmethod
+    # def from_train_set(cls, dataset: MoleculePropertyPredictionDataset) -> Self:
+    #     # TODO: when encoutering multiple results for the same original molecule and text, load will be crashed
+    #     # so we ignore same smiles multi labels
+    #     # just be multiple mol-labels pairs for multi-labels
+    #     # NOTE: 
+    #     # Given the same original molecule and text, multiple results are acceptable
+    #     # We combine these results for evaluation
+    #     mol2label = dict()
+    #     for i in range(len(dataset)):
+    #         molecule = dataset.molecules[i]
+    #         label = dataset.labels[i]
+    #         dict_key = str(molecule)
+    #         if dict_key not in mol2label:
+    #             mol2label[dict_key] = []
+    #         mol2label[dict_key].append((molecule, label))
+    #     new_dataset = cls()
+    #     for k, v in mol2label.items():
+    #         new_dataset.molecules.append(v[0][0])
+    #         new_dataset.labels.append([x[1] for x in v])
+    #     new_dataset.featurizer = dataset.featurizer
+    #     return new_dataset
+
     @classmethod
     def from_train_set(cls, dataset: MoleculePropertyPredictionDataset) -> Self:
         # NOTE: 
-        # Given the same original molecule and text, multiple results are acceptable
-        # We combine these results for evaluation
-        mol2label = dict()
-        for i in range(len(dataset)):
-            molecule = dataset.molecules[i]
-            label = dataset.labels[i]
-            dict_key = str(molecule)
-            if dict_key not in mol2label:
-                mol2label[dict_key] = []
-            mol2label[dict_key].append((molecule, label))
+        # WARNING: ignore same smiles different labels
         new_dataset = cls()
-        for k, v in mol2label.items():
-            new_dataset.molecules.append(v[0][0])
-            new_dataset.labels.append([x[1] for x in v])
+        
+        new_dataset.molecules = dataset.molecules
+        new_dataset.labels = [] 
+        for label in dataset.labels:
+            new_dataset.labels.append([label])
         new_dataset.featurizer = dataset.featurizer
         return new_dataset
 
@@ -129,6 +145,117 @@ def _load_esol_dataset(input_path):
 
 # input_path = 'dataset/esol/raw/delaney-processed.csv'
 # smiles_list, rdkit_mol_objs_list, labels = _load_esol_dataset(input_path)
+
+def _load_tdc_classification_dataset(input_path):
+    input_df_trainval = pd.read_csv(os.path.join(input_path, 'train_val.csv'), sep=',')
+    input_df_test = pd.read_csv(os.path.join(input_path, 'test.csv'), sep=',')
+
+    smiles_list_trainval = input_df_trainval['Drug'].tolist()
+    smiles_list_test = input_df_test['Drug'].tolist()
+
+    smiles_list_trainval_copy = smiles_list_trainval.copy()
+
+
+    rdkit_mol_objs_list_trainval = [AllChem.MolFromSmiles(s) for s in smiles_list_trainval]
+    rdkit_mol_objs_list_test = [AllChem.MolFromSmiles(s) for s in smiles_list_test]
+
+    rdkit_mol_objs_list_trainval_copy = rdkit_mol_objs_list_trainval.copy()
+
+    labels_trainval = input_df_trainval['Y'].replace(0, -1).tolist()
+    labels_test = input_df_test['Y'].replace(0, -1).tolist()
+
+    labels_trainval_copy = labels_trainval.copy()
+
+    trainval_indices = list(range(len(smiles_list_trainval)))
+    test_indices = list(range(len(smiles_list_trainval), len(smiles_list_trainval) + len(smiles_list_test)))
+
+    assert len(smiles_list_trainval) == len(rdkit_mol_objs_list_trainval)
+    assert len(smiles_list_trainval) == len(labels_trainval)
+    assert len(smiles_list_test) == len(rdkit_mol_objs_list_test)
+    assert len(smiles_list_test) == len(labels_test)
+    assert len(rdkit_mol_objs_list_trainval) + len(rdkit_mol_objs_list_test) == len(smiles_list_trainval) + len(smiles_list_test)
+
+    smiles_list_trainval.extend(smiles_list_test)
+    rdkit_mol_objs_list_trainval.extend(rdkit_mol_objs_list_test)
+    labels_trainval.extend(labels_test)
+
+    smiles_list = np.array(smiles_list_trainval)
+    rdkit_mol_objs_list = np.array(rdkit_mol_objs_list_trainval)
+    labels = np.array(labels_trainval)
+
+    # TODO now just concat return 
+    return smiles_list, \
+           rdkit_mol_objs_list, \
+           labels, \
+           smiles_list_trainval_copy, \
+           rdkit_mol_objs_list_trainval_copy, \
+           labels_trainval_copy, \
+           test_indices
+
+def _load_tdc_regression_dataset(input_path):
+    input_df_trainval = pd.read_csv(os.path.join(input_path, 'train_val.csv'), sep=',')
+    input_df_test = pd.read_csv(os.path.join(input_path, 'test.csv'), sep=',')
+
+    smiles_list_trainval = input_df_trainval['Drug'].tolist()
+    smiles_list_test = input_df_test['Drug'].tolist()
+
+    smiles_list_trainval_copy = smiles_list_trainval.copy()
+
+
+    rdkit_mol_objs_list_trainval = [AllChem.MolFromSmiles(s) for s in smiles_list_trainval]
+    rdkit_mol_objs_list_test = [AllChem.MolFromSmiles(s) for s in smiles_list_test]
+
+    rdkit_mol_objs_list_trainval_copy = rdkit_mol_objs_list_trainval.copy()
+
+    labels_trainval = input_df_trainval['Y'].tolist()
+    labels_test = input_df_test['Y'].tolist()
+
+    labels_trainval_copy = labels_trainval.copy()
+
+    trainval_indices = list(range(len(smiles_list_trainval)))
+    test_indices = list(range(len(smiles_list_trainval), len(smiles_list_trainval) + len(smiles_list_test)))
+
+    assert len(smiles_list_trainval) == len(rdkit_mol_objs_list_trainval)
+    assert len(smiles_list_trainval) == len(labels_trainval)
+    assert len(smiles_list_test) == len(rdkit_mol_objs_list_test)
+    assert len(smiles_list_test) == len(labels_test)
+    assert len(rdkit_mol_objs_list_trainval) + len(rdkit_mol_objs_list_test) == len(smiles_list_trainval) + len(smiles_list_test)
+
+    smiles_list_trainval.extend(smiles_list_test)
+    rdkit_mol_objs_list_trainval.extend(rdkit_mol_objs_list_test)
+    labels_trainval.extend(labels_test)
+
+    smiles_list = np.array(smiles_list_trainval)
+    rdkit_mol_objs_list = np.array(rdkit_mol_objs_list_trainval)
+    labels = np.array(labels_trainval)
+
+    # TODO now just concat return 
+    return smiles_list, \
+           rdkit_mol_objs_list, \
+           labels, \
+           smiles_list_trainval_copy, \
+           rdkit_mol_objs_list_trainval_copy, \
+           labels_trainval_copy, \
+           test_indices
+
+def _load_caco2_dataset(input_path):
+    return _load_tdc_regression_dataset(input_path)
+
+def _load_bbb_dataset(input_path):
+    return _load_tdc_classification_dataset(input_path)
+
+def _load_cyp2c9_inhibition_dataset(input_path):
+    return _load_tdc_classification_dataset(input_path)
+
+def _load_half_life_dataset(input_path):
+    return _load_tdc_regression_dataset(input_path)
+
+def _load_ld50_dataset(input_path):
+    return _load_tdc_regression_dataset(input_path)
+           
+
+
+# input_path = 'dataset/admet_group/caco2_wang/'
 
 def _load_freesolv_dataset(input_path):
 
@@ -421,6 +548,11 @@ datasetname2function = {
     "freesolv": _load_freesolv_dataset,
     "esol": _load_esol_dataset,
     "lipophilicity": _load_lipophilicity_dataset,
+    "caco2_wang": _load_caco2_dataset,
+    "bbb_martins": _load_bbb_dataset,
+    "cyp2c9_veith": _load_cyp2c9_inhibition_dataset,
+    "half_life_obach": _load_half_life_dataset,
+    "ld50_zhu": _load_ld50_dataset,
 }
 
 class Task(Enum):
@@ -460,7 +592,12 @@ class MoleculeNet(MoleculePropertyPredictionDataset):
           "qm7":      ["u0_atom"],
           "qm8":      ["E1-CC2", "E2-CC2", "f1-CC2", "f2-CC2", "E1-PBE0", "E2-PBE0", 
                       "f1-PBE0", "f2-PBE0", "E1-CAM", "E2-CAM", "f1-CAM","f2-CAM"],
-          "qm9":      ['mu', 'alpha', 'homo', 'lumo', 'gap', 'r2', 'zpve', 'cv']
+          "qm9":      ['mu', 'alpha', 'homo', 'lumo', 'gap', 'r2', 'zpve', 'cv'],
+          "caco2_wang":    [""],
+          "bbb_martins":      [""],
+          "cyp2c9_veith": [""],
+          "half_life_obach":[""],
+          "ld50_zhu":     [""],
       }
     name2task = {
           "BBBP":     Task.CLASSFICATION,
@@ -471,12 +608,18 @@ class MoleculeNet(MoleculePropertyPredictionDataset):
           "SIDER":    Task.CLASSFICATION,
           "MUV":      Task.CLASSFICATION,
           "Toxcast":  Task.CLASSFICATION,
+          "bbb_martins":      Task.CLASSFICATION,
+          "cyp2c9_veith": Task.CLASSFICATION,
           "FreeSolv": Task.REGRESSION,
           "ESOL":     Task.REGRESSION,
           "Lipo":     Task.REGRESSION,
           "qm7":      Task.REGRESSION,
           "qm8":      Task.REGRESSION,
-          "qm9":      Task.REGRESSION
+          "qm9":      Task.REGRESSION,
+          "caco2_wang":    Task.REGRESSION,
+          "half_life_obach": Task.REGRESSION,
+          "ld50_zhu":     Task.REGRESSION,
+          
       }
 
     name2text = {
@@ -489,14 +632,30 @@ class MoleculeNet(MoleculePropertyPredictionDataset):
       "bace": "Quantitative (IC50) and qualitative (binary label) binding results for human β-secretase 1(BACE-1)",
       "muv": "Subset of PubChem BioAssay designed for validation of virtual screening techniques",
     }
+
+    tdc_names = ["caco2_wang","bbb_martins","cyp2c9_veith","half_life_obach","ld50_zhu"]
+
     def __init__(self, cfg: Config, featurizer: Featurizer) -> None:
         self.name = cfg.name
         self.targets = self.name2target[cfg.name]
         # TODO: 看一下graphmvp这里是干什么用的，后续上regression任务的时候要考虑
-        self.task = self.name2task[cfg.name]
-        file_name = os.listdir(os.path.join(cfg.path, self.name.lower(), "raw"))[0]
-        assert file_name[-4:] == ".csv"
-        self.path = os.path.join(cfg.path, self.name.lower(), "raw", file_name)
+        if self.name not in self.tdc_names:
+            self.task = self.name2task[cfg.name]
+            file_name = os.listdir(os.path.join(cfg.path, self.name.lower(), "raw"))[0]
+            assert file_name[-4:] == ".csv"
+            self.path = os.path.join(cfg.path, self.name.lower(), "raw", file_name)
+        else:
+            self.task = self.name2task[cfg.name]
+            # file_name = os.listdir(cfg.path)[0]
+            original_path = cfg.path
+            parent_dir = os.path.dirname(original_path)
+            dataset_dir = os.path.basename(original_path)
+
+            new_path = os.path.join(parent_dir, 'admet_group', dataset_dir)
+            file_name = os.listdir(new_path)[0]
+            assert file_name[-4:] == ".csv"
+            self.path = new_path
+            cfg.path = new_path
         super(MoleculeNet, self).__init__(cfg, featurizer)
 
     def _train_test_split(self, strategy="scaffold"):
@@ -516,19 +675,37 @@ class MoleculeNet(MoleculePropertyPredictionDataset):
             self.normalizer = [None] * len(self.targets)
 
     def _load_data(self) -> None:
-        smiles_list, rdkit_mol_objs, labels = datasetname2function[self.name.lower()](self.path)
+        if self.name not in self.tdc_names:
+            smiles_list, rdkit_mol_objs, labels = datasetname2function[self.name.lower()](self.path)
+        else:
+            smiles_list, rdkit_mol_objs, labels, smiles_list_trainval, rdkit_mol_objs_trainval, labels_trainval, test_ids = datasetname2function[self.name.lower()](self.path)
+
         if labels.ndim == 1:
             labels = np.expand_dims(labels, axis=1)
-        # TODO: 
-        for i in range(len(smiles_list)):
-            rdkit_mol = rdkit_mol_objs[i]
-            if rdkit_mol is None:
-                continue
-            # TODO: drugs and smiles are all get from AllChem.MolFromSmiles()
-            #self.smiles.append(smiles_list[i])
-            self.molecules.append(Molecule.from_smiles(smiles_list[i]))
-            self.labels.append(labels[i])
-        self._train_test_split()
+        
+        def load_smiles_and_labels(smiles_list, rdkit_mol_objs, labels):
+            self.molecules = []
+            self.labels = []
+            for i in range(len(smiles_list)):
+                rdkit_mol = rdkit_mol_objs[i]
+                if rdkit_mol is None:
+                    continue
+                # TODO: drugs and smiles are all get from AllChem.MolFromSmiles()
+                #self.smiles.append(smiles_list[i])
+                self.molecules.append(Molecule.from_smiles(smiles_list[i]))
+                self.labels.append(labels[i])
+        load_smiles_and_labels(smiles_list, rdkit_mol_objs, labels)
+
+        if self.name not in self.tdc_names:
+            self._train_test_split()
+        else:
+            load_smiles_and_labels(smiles_list_trainval, rdkit_mol_objs_trainval, labels_trainval)      
+
+            self.train_index, self.validation_index, self.test_index = scaffold_split(self, 0.05, 0.05, is_standard=True)
+            self.validation_index.extend(self.test_index)
+            self.test_index = test_ids
+
+            load_smiles_and_labels(smiles_list, rdkit_mol_objs, labels)
         self._normalize()
         self.split_indexes = {}
         for split in ["train", "validation", "test"]:

@@ -19,13 +19,15 @@
 
 ## 更新信息 🎉
 
+- [2025/05/26] 🔥 我们的框架进行了功能更新，包括新的工具、数据集和模型。我们实现了**LangCell** (📃[论文](https://arxiv.org/abs/2405.06708), 🤖[模型](https://drive.google.com/drive/folders/1cuhVG9v0YoAnjW-t_WMpQQguajumCBTp?usp=sharing), 📎[引用](#to-cite-langcell)) 和细胞数据处理接口（见[示例](./examples/cell_annotation.ipynb))。我们还推出了ADMET、QED、SA、LogP、Lipinski、相似性等分子性质预测工具。
+
 - [2025/03/07] 🔥 发布**OpenBioMed生物医药智能体开发平台**，可通过[该链接](http://openbiomed.pharmolix.com)访问。该平台能帮助研发人员零门槛使用AI模型定制化自己的科学研究助手（**AutoPilot**）。平台的[使用文档](https://www.zybuluo.com/icycookies/note/2587490)已经同步发布。
 
-- [2025/03/07] 🔥 发布**OpenBioMed v2**. 我们在这次更新中适配了更多的生物医药下游任务，开放了更加易用的数据接口，并继承了更前沿的AI模型。同时，我们发布了试用版**PharmolixFM**模型（📃[技术报告](), 🤖[模型](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/), 📎[引用](#to-cite-pharmolixfm)），并完成了BioMedGPT-R1模型的推理支持。我们预计于本月内开放BioMedGPT-R1的微调代码。
+- [2025/03/07] 🔥 发布**OpenBioMed v2**. 我们在这次更新中适配了更多的生物医药下游任务，开放了更加易用的数据接口，并继承了更前沿的AI模型。同时，我们发布了试用版**PharmolixFM**模型（📃[技术报告](https://arxiv.org/abs/2503.21788), 🤖[模型](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/), 📎[引用](#to-cite-pharmolixfm)），并完成了BioMedGPT-R1模型的推理支持。我们预计于本月内开放BioMedGPT-R1的微调代码。
 
     > PharmolixFM是由水木分子与清华大学智能产业研究院联合研发的全原子基础大模型。该模型使用最先进的非自回归式多模态生成模型，在原子尺度上实现了对分子、抗体和蛋白质的联合建模。PharmolixFM能够适配多种下游任务，如分子对接、基于口袋的分子设计、抗体设计、分子构象生成等。在给定口袋位置的分子对接任务中，PharMolixFM的预测精度可与AlphaFold3媲美 (83.9 vs 90.2, RMSD < 2Å) 。
 
-- [2025/02/20] 🔥 发布**BioMedGPT-R1** (🤗[Huggingface模型](https://huggingface.co/PharMolix/BioMedGPT-R1)).
+- [2025/02/20] 发布**BioMedGPT-R1** (🤗[Huggingface模型](https://huggingface.co/PharMolix/BioMedGPT-R1)).
   
     > BioMedGPT-R1-17B是由水木分子与清华大学智能产业研究院（AIR）联合发布的生物医药多模态推理模型。其在上一版本的基础上，用DeepSeek-R1-Distill-Qwen-14B更新了原采用的文本基座模型，并通过跨模态对齐和多模态推理SFT实现模型微调，在生物医药问答任务上效果逼近闭源商用大模型和人类专家水平。
 
@@ -90,7 +92,7 @@ OpenBioMed的核心特色如下:
 |   蛋白质结构检索    |                              无                              |       基于ID，从PDB和AlphaFoldDB数据库中检索蛋白质结构       |
 |  蛋白质结构可视化   |                             N/A                              |                       蛋白质结构可视化                       |
 | 蛋白质-分子刚性对接 | [PharmolixFM](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/) |         给定蛋白口袋结构和分子，生成对接后的分子构象         |
-| 基于口袋的分子设计  | [PharmolixFM](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/) |      给定蛋白口袋结构，生成能与该口袋对接的分子及其构象      |
+| 基于口袋的分子设计  | [PharmolixFM](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/), [MolCRAFT](https://github.com/AlgoMole/MolCRAFT) |      给定蛋白口袋结构，生成能与该口袋对接的分子及其构象      |
 |    复合物可视化     |                             N/A                              |            可视化蛋白质-小分子结合后的复合物结构             |
 |     口袋可视化      |                             N/A                              |                    可视化蛋白质的口袋结构                    |
 |     互联网搜索      |                             N/A                              |                      在互联网中检索信息                      |
@@ -122,13 +124,31 @@ pip install imageio
 pip install meeko==0.1.dev3 pdb2pqr vina==1.2.2 
 python -m pip install git+https://github.com/Valdes-Tresanco-MS/AutoDockTools_py3
 
+# PoseBusters依赖
+pip install posebusters==0.3.1
+
 # 部分评估指标依赖
 pip install spacy rouge_score nltk
 python
 >>> import nltk
 >>> nltk.download('wordnet')
 >>> nltk.download('omw-1.4')
+
+# LangCell依赖
+pip install geneformer
 ```
+
+下载依赖后，您可以运行以下命令安装OpenBioMed包，从而更方便地使用我们的接口：
+
+```bash
+pip install -e .
+# 使用OpenBioMed的接口
+python
+>>> from open_biomed.data import Molecule
+>>> molecule = Molecule(smiles="CC(=O)OC1=CC=CC=C1C(=O)O")
+>>> print(molecule.calc_logp())
+```
+
 ### 构建docker
 
 直接运行 `./scripts/docker_run.sh`，就可以构建docker镜像并运行容器，并在端口8082和8083运行后端服务。
@@ -179,7 +199,7 @@ git checkout v1.0
 
 ```
 @misc{OpenBioMed_code,
-      author={Luo, Yizhen and Yang, Kai and Fan, Siqi and Hong, Massimo and Nie, Zikun and Luo, Wen and Xie, Ailin and Liu, Xing Yi and Zhao, Suyuan and Zhang, Jiahuan and Wu, Yushuai and Nie, Zaiqing},
+      author={Luo, Yizhen and Yang, Kai and Fan, Siqi and Hong, Massimo and Zhao, Suyuan and Chen, Xinrui and Nie, Zikun and Luo, Wen and Xie, Ailin and Liu, Xing Yi and Zhang, Jiahuan and Wu, Yushuai and Nie, Zaiqing},
       title={Code of OpenBioMed},
       year={2023},
       howpublished={\url{https://github.com/Pharmolix/OpenBioMed.git}}
@@ -200,7 +220,12 @@ git checkout v1.0
 
 ##### 引用PharMolixFM:
 
-即将上线
+@article{luo2025pharmolixfm,
+  title={PharMolixFM: All-Atom Foundation Models for Molecular Modeling and Generation},
+  author={Luo, Yizhen and Wang, Jiashuo and Fan, Siqi and Nie, Zaiqing},
+  journal={arXiv preprint arXiv:2503.21788},
+  year={2025}
+}
 
 ##### 引用MolFM:
 ```

@@ -1,0 +1,8 @@
+model:
+  name: langcell
+  cell_model: ./checkpoints/langcell/cell_bert
+  cell_proj: ./checkpoints/langcell/cell_proj.bin
+  text_tokenizer: ./checkpoints/langcell/pubmedbert-base
+  text_model: ./checkpoints/langcell/text_bert
+  text_proj: ./checkpoints/langcell/text_proj.bin
+  ctm_head: ./checkpoints/langcell/ctm_head.bin

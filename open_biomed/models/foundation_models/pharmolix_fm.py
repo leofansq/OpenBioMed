@@ -1,11 +1,14 @@
-from typing import Dict, List, Optional
-from typing_extensions import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import copy
-import numpy as np
+from contextlib import contextmanager
+import itertools
 import logging
+import numpy as np
 from rdkit import Chem, Geometry, RDLogger
+import re
 RDLogger.DisableLog("rdApp.*")
+import signal
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,12 +17,137 @@ from torch_geometric.nn import knn, knn_graph
 from torch_scatter import scatter_mean, scatter_sum
 from tqdm import tqdm
 
-from open_biomed.data import Molecule, Pocket, fix_valence, estimate_ligand_atom_num
+from open_biomed.data import Molecule, Pocket, estimate_ligand_atom_num
 from open_biomed.models.task_models import PocketMolDockModel, StructureBasedDrugDesignModel
 from open_biomed.utils.collator import PygCollator
 from open_biomed.utils.config import Config
 from open_biomed.utils.featurizer import MoleculeFeaturizer, PocketFeaturizer, Featurized
 from open_biomed.utils.misc import safe_index
+
+@contextmanager
+def time_limit(seconds):
+    def signal_handler(signum, frame):
+        raise Exception("Timed out!")
+    signal.signal(signal.SIGALRM, signal_handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+
+def fix_valence(mol: Chem.RWMol) -> Tuple[Chem.RWMol, bool]:
+    # Fix valence erros in a molecule by adding electrons to N
+    mol = copy.deepcopy(mol)
+    fixed = False
+    cnt_loop = 0
+    while True:
+        try:
+            Chem.SanitizeMol(copy.deepcopy(mol))
+            fixed = True
+            Chem.SanitizeMol(mol)
+            break
+        except Chem.rdchem.AtomValenceException as e:
+            err = e
+        except Exception as e:
+            return mol, False # from HERE: rerun sample
+        cnt_loop += 1
+        if cnt_loop > 100:
+            break
+        N4_valence = re.compile(u"Explicit valence for atom # ([0-9]{1,}) N, 4, is greater than permitted")
+        index = N4_valence.findall(err.args[0])
+        if len(index) > 0:
+            mol.GetAtomWithIdx(int(index[0])).SetFormalCharge(1)
+    return mol, fixed
+
+def get_ring_sys(mol):
+    all_rings = Chem.GetSymmSSSR(mol)
+    if len(all_rings) == 0:
+        ring_sys_list = []
+    else:
+        ring_sys_list = [all_rings[0]]
+        for ring in all_rings[1:]:
+            form_prev = False
+            for prev_ring in ring_sys_list:
+                if set(ring).intersection(set(prev_ring)):
+                    prev_ring.extend(ring)
+                    form_prev = True
+                    break
+            if not form_prev:
+                ring_sys_list.append(ring)
+    ring_sys_list = [list(set(x)) for x in ring_sys_list]
+    return ring_sys_list
+
+def get_all_subsets(ring_list):
+    all_sub_list = []
+    for n_sub in range(len(ring_list)+1):
+        all_sub_list.extend(itertools.combinations(ring_list, n_sub))
+    return all_sub_list
+
+def fix_aromatic(mol: Chem.RWMol, strict: bool=False) -> Tuple[Chem.RWMol, bool]:
+    mol_orig = mol
+    atomatic_list = [a.GetIdx() for a in mol.GetAromaticAtoms()]
+    N_ring_list = []
+    S_ring_list = []
+    for ring_sys in get_ring_sys(mol):
+        if set(ring_sys).intersection(set(atomatic_list)):
+            idx_N = [atom for atom in ring_sys if mol.GetAtomWithIdx(atom).GetSymbol() == 'N']
+            if len(idx_N) > 0:
+                idx_N.append(-1) # -1 for not add to this loop
+                N_ring_list.append(idx_N)
+            idx_S = [atom for atom in ring_sys if mol.GetAtomWithIdx(atom).GetSymbol() == 'S']
+            if len(idx_S) > 0:
+                idx_S.append(-1) # -1 for not add to this loop
+                S_ring_list.append(idx_S)
+    # enumerate S
+    fixed = False
+    if strict:
+        S_ring_list = [s for ring in S_ring_list for s in ring if s != -1]
+        permutation = get_all_subsets(S_ring_list)
+    else:
+        permutation = list(itertools.product(*S_ring_list))
+    for perm in permutation:
+        mol = copy.deepcopy(mol_orig)
+        perm = [x for x in perm if x != -1]
+        for idx in perm:
+            mol.GetAtomWithIdx(idx).SetFormalCharge(1)
+        try:
+            if strict:
+                mol, fixed = fix_valence(mol)
+            Chem.SanitizeMol(copy.deepcopy(mol))
+            fixed = True
+            Chem.SanitizeMol(mol)
+            break
+        except:
+            continue
+    # enumerate N
+    if not fixed:
+        if strict:
+            N_ring_list = [s for ring in N_ring_list for s in ring if s != -1]
+            permutation = get_all_subsets(N_ring_list)
+        else:
+            permutation = list(itertools.product(*N_ring_list))
+        for perm in permutation:  # each ring select one atom
+            perm = [x for x in perm if x != -1]
+            actions = itertools.product([0, 1], repeat=len(perm))
+            for action in actions: # add H or charge
+                mol = copy.deepcopy(mol_orig)
+                for idx, act_atom in zip(perm, action):
+                    if act_atom == 0:
+                        mol.GetAtomWithIdx(idx).SetNumExplicitHs(1)
+                    else:
+                        mol.GetAtomWithIdx(idx).SetFormalCharge(1)
+                try:
+                    if strict:
+                        mol, fixed = fix_valence(mol)
+                    Chem.SanitizeMol(copy.deepcopy(mol))
+                    fixed = True
+                    Chem.SanitizeMol(mol)
+                    break
+                except:
+                    continue
+            if fixed:
+                break
+    return mol, fixed
 
 # Featurizers
 class PharmolixFMMoleculeFeaturizer(MoleculeFeaturizer):
@@ -113,14 +241,47 @@ class PharmolixFMMoleculeFeaturizer(MoleculeFeaturizer):
         mol = rdmol.GetMol()
         try:
             Chem.SanitizeMol(copy.deepcopy(mol))
+            fixed = True
             Chem.SanitizeMol(mol)
-            return Molecule.from_rdmol(mol)
         except Exception as e:
-            mol, fixed = fix_valence(mol)
-            if not fixed:
-                logging.warn("Failed to generate valid molecule")
+            fixed = False
+
+        if not fixed:
+            try:
+                Chem.Kekulize(copy.deepcopy(mol))
+            except Chem.rdchem.KekulizeException as e:
+                err = e
+                if 'Unkekulized' in err.args[0]:
+                    try:
+                        with time_limit(300):
+                            mol, fixed = fix_aromatic(mol)
+                    except Exception as e:
+                        logging.warn('Timeout for fixing aromatic rings')
+                        return None
+
+        # valence error for N 
+        if not fixed:
+            try:
+                with time_limit(300):
+                    mol, fixed = fix_valence(mol)
+            except Exception as e:
+                logging.warn('Timeout for fixing valence')
                 return None
-            return Molecule.from_rdmol(mol)
+            
+        if not fixed:
+            try:
+                with time_limit(300):
+                    mol, fixed = fix_aromatic(mol, True)
+            except Exception as e:
+                logging.warn('Timeout for fixing aromatic rings')
+                return None
+            
+        try:
+            Chem.SanitizeMol(mol)
+        except Exception as e:
+            logging.warn('Failed generate a valid molecule')
+            return None
+        return Molecule.from_rdmol(mol)
 
 class PharmolixFMPocketFeaturizer(PocketFeaturizer):
     def __init__(self, knn: int=32, pos_norm: float=1.0) -> None:
@@ -630,12 +791,18 @@ class PharmolixFM(PocketMolDockModel, StructureBasedDrugDesignModel):
         num_atoms = pocket["estimated_ligand_num_atoms"].cpu()
         num_halfedge = (num_atoms ** 2 - num_atoms) // 2
         batch_size = num_atoms.shape[0]
+        halfedge_index = []
+        cur_num = 0
+        for num in num_atoms:
+            halfedge_index.append(torch.triu_indices(num, num, offset=1) + cur_num)
+            cur_num += num
+
         return Data(**{
             "pos": torch.randn(num_atoms.sum().item(), 3) * 0.01,
             "node_type": torch.ones(num_atoms.sum().item(), self.num_node_types) / self.num_node_types,
             "halfedge_type": torch.ones(num_halfedge.sum().item(), self.num_edge_types) / self.num_edge_types,
             "is_peptide": torch.zeros(num_atoms.sum().item(), dtype=torch.long),
-            "halfedge_index": torch.cat([torch.triu_indices(num, num, offset=1) for num in num_atoms], dim=1),
+            "halfedge_index": torch.cat(halfedge_index, dim=1),
             "pos_batch": torch.repeat_interleave(torch.arange(batch_size), num_atoms),
             "node_type_batch": torch.repeat_interleave(torch.arange(batch_size), num_atoms),
             "halfedge_type_batch": torch.repeat_interleave(torch.arange(batch_size), num_halfedge),
@@ -786,6 +953,12 @@ class PharmolixFM(PocketMolDockModel, StructureBasedDrugDesignModel):
                 fixed_pos=molecule["fixed_halfedge_type"], orig_x=molecule["halfedge_type"]
             )
 
+        # Concat trajectories
+        for key in molecule_in:
+            in_traj[key] = torch.stack(in_traj[key], dim=0)
+            out_traj[key] = torch.stack(out_traj[key], dim=0)
+            cfd_traj[key] = torch.stack(cfd_traj[key], dim=0)
+
         # Split and reconstruct molecule
         num_mols = molecule["node_type_batch"].max() + 1
         in_traj_split, out_traj_split, cfd_traj_split = [], [], []
@@ -796,15 +969,23 @@ class PharmolixFM(PocketMolDockModel, StructureBasedDrugDesignModel):
             cfd_traj_split.append({})
             cur_molecule = {}
             for key in molecule_in:
-                idx = torch.where(molecule[f"{key}_batch"] == i)
-                in_traj_split[i][key] = [val[idx] for val in in_traj[key]]
-                out_traj_split[i][key] = [val[idx] for val in out_traj[key]]
-                cfd_traj_split[i][key] = [val[idx] for val in cfd_traj[key]]
+                idx = torch.where(molecule[f"{key}_batch"] == i)[0]
+                in_traj_split[i][key] = in_traj[key][:, idx, :]
+                out_traj_split[i][key] = out_traj[key][:, idx, :]
+                cfd_traj_split[i][key] = cfd_traj[key][:, idx, :]
                 cur_molecule[key] = out_traj_split[i][key][-1]
             cur_molecule["node_type"] = torch.argmax(cur_molecule["node_type"], dim=-1)
             cur_molecule["halfedge_type"] = torch.argmax(cur_molecule["halfedge_type"], dim=-1)
             out_molecules.append(self.featurizers["molecule"].decode(cur_molecule, pocket["pocket_center"][i]))
-            # print(out_molecules[-1].conformer)
+            """
+            import pickle
+            from datetime import datetime
+            pickle.dump({
+                "in_traj": in_traj_split[0],
+                "out_traj": out_traj_split[0],
+                "cfd_traj": cfd_traj_split[0],
+            }, open(f"./tmp/debug_traj_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl", "wb"))
+            """
         return out_molecules
 
     # TODO: implement training of PharMolixFM

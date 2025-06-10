@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, Callable
 
 from abc import ABC, abstractmethod
 

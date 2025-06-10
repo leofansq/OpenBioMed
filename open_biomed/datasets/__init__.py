@@ -7,52 +7,56 @@ from open_biomed.datasets.protein_question_answering import PQA
 from open_biomed.datasets.multimodal_question_answering import MultimodalQA
 
 from open_biomed.datasets.molecule_property_prediction_dataset import MoleculeNet
+from open_biomed.datasets.molecule_protein_dataset import PoseBustersV2, CrossDocked
 
 DATASET_REGISTRY = {
-    "text_based_molecule_editing":
-        {
-            "fs_mol_edit": FSMolEdit,   
-        },
-    "molecule_captioning":
-        {
-            "CheBI_20": CheBI20ForMol2Text
-        },
-    "text_guided_molecule_generation":
-        {
-            "CheBI_20": CheBI20ForText2Mol
-        },
-    "molecule_question_answering":
-        {
-            "MQA": MQA
-        },
-    "text_based_protein_generation":
-        {
-            "Mol-Instructions": MolInstructionsForProteinDesign,
-        },
-    "protein_question_answering":
-        {
-            "PQA": PQA
-        },
-    "molecule_property_prediction":
-        {
-            "BBBP": MoleculeNet,
-            "Tox21": MoleculeNet,
-            "ClinTox": MoleculeNet,
-            "HIV": MoleculeNet,
-            "Bace": MoleculeNet,
-            "SIDER": MoleculeNet,
-            "MUV": MoleculeNet,
-            "Toxcast": MoleculeNet,
-            # TODO: 以下是回归任务
-            "FreeSolv": MoleculeNet,
-            "ESOL": MoleculeNet,
-            "Lipo": MoleculeNet,
-            "qm7": MoleculeNet,
-            "qm8": MoleculeNet,
-            "qm9": MoleculeNet
-        },
-    "multimodal_question_answering":
-        {
+    "text_based_molecule_editing": {
+        "fs_mol_edit": FSMolEdit,   
+    },
+    "molecule_captioning": {
+        "CheBI_20": CheBI20ForMol2Text
+    },
+    "text_guided_molecule_generation": {
+        "CheBI_20": CheBI20ForText2Mol
+    },
+    "molecule_question_answering": {
+        "MQA": MQA
+    },
+    "text_based_protein_generation": {
+        "Mol-Instructions": MolInstructionsForProteinDesign,
+    },
+    "protein_question_answering": {
+        "PQA": PQA
+    },
+    "molecule_property_prediction": {
+        "BBBP": MoleculeNet,
+        "Tox21": MoleculeNet,
+        "ClinTox": MoleculeNet,
+        "HIV": MoleculeNet,
+        "Bace": MoleculeNet,
+        "SIDER": MoleculeNet,
+        "MUV": MoleculeNet,
+        "Toxcast": MoleculeNet,
+        "bbb_martins": MoleculeNet,
+        "cyp2c9_veith": MoleculeNet,
+        # TODO: 以下是回归任务
+        "FreeSolv": MoleculeNet,
+        "ESOL": MoleculeNet,
+        "Lipo": MoleculeNet,
+        "qm7": MoleculeNet,
+        "qm8": MoleculeNet,
+        "qm9": MoleculeNet,
+        "caco2_wang": MoleculeNet,
+        "half_life_obach": MoleculeNet,
+        "ld50_zhu": MoleculeNet,
+    },
+    "pocket_molecule_docking": {
+        "posebusters": PoseBustersV2,
+    },
+    "structure_based_drug_design": {
+        "CrossDocked": CrossDocked
+    },
+    "multimodal_question_answering":{
             "biomedical_qa": MultimodalQA
-        },
+    }
 }

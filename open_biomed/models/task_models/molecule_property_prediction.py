@@ -16,7 +16,7 @@ def get_num_task(dataset):
     """ used in molecule_finetune.py """
     if dataset == 'tox21':
         return 12
-    elif dataset in ['hiv', 'bace', 'bbbp', 'donor']:
+    elif dataset in ['hiv', 'bace', 'bbbp', 'donor', "bbb_martins", "caco2_wang", "cyp2c9_veith", "half_life_obach", "ld50_zhu"]:
         return 1
     elif dataset == 'pcba':
         return 92

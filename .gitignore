@@ -142,6 +142,7 @@ cython_debug/
 /assets/*
 /checkpoints/**/*
 /datasets/**/*
+/misc/*
 /tmp/*
 /third_party/*
 !/third_party/.placeholder

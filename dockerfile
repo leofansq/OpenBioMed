@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     g++ \
     cmake \
+    zip \
     curl \
     ca-certificates \
     git \
@@ -56,4 +57,4 @@ WORKDIR /app
 RUN echo "source activate OpenBioMed" >> ~/.bashrc
 
 # Set default command
-ENTRYPOINT ["./scripts/run_docker.sh"]
+ENTRYPOINT ["./scripts/run_server.sh"]

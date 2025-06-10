@@ -215,6 +215,7 @@ class TrainValPipeline(Pipeline):
         )
 
     def run(self) -> None:
+        num_test_repeats = getattr(self.cfg.evaluation, "num_test_repeats", 1)
         if not self.cfg.test_only:
             self.model.train_cfg.max_iters = len(self.datamodule.train_dataloader()) * self.cfg.train.max_epochs
             self.trainer.fit(self.model, train_dataloaders=self.datamodule.train_dataloader(), val_dataloaders=self.datamodule.val_dataloader())
@@ -225,10 +226,18 @@ class TrainValPipeline(Pipeline):
                 ckpt_path = os.path.join(self.cfg.accounting.checkpoint_dir, "last.ckpt")
             else:
                 ckpt_path = self.cfg.evaluation.ckpt_path
-            # TODO: implement parallel testing on multiple gpus
-            self.trainer.test(self.model, dataloaders=self.datamodule.test_dataloader(), ckpt_path=ckpt_path)
         else:
-            self.trainer.test(self.model, dataloaders=self.datamodule.test_dataloader(), ckpt_path=self.cfg.evaluation.ckpt_path)
+            ckpt_path = self.cfg.evaluation.ckpt_path
+
+        # TODO: implement parallel testing on multiple gpus
+        if num_test_repeats > 1:
+            # NOTE: for multiple repeats, the results should be averaged over all repeats in ValidationCallback
+            for i in range(num_test_repeats):
+                logging.info(f"Testing the {i}-th repeat...")
+                cur_result = self.trainer.test(self.model, dataloaders=self.datamodule.test_dataloader(), ckpt_path=ckpt_path)[0]
+            print("Overall results:", cur_result)
+        else:
+            self.trainer.test(self.model, dataloaders=self.datamodule.test_dataloader(), ckpt_path=ckpt_path)
 
 class InferencePipeline(Pipeline, Tool):
     def __init__(self, 
@@ -243,7 +252,7 @@ class InferencePipeline(Pipeline, Tool):
     ) -> None:
         super().__init__()
 
-        self.cfg = Config(config_file=f"./configs/model/{model}.yaml")
+        self.cfg = Config(config_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "configs", "model", f"{model}.yaml"))
         if additional_config is not None:
             self.cfg = merge_config(self.cfg, Config(config_file=additional_config))
         self.cfg.task = task
@@ -276,13 +285,15 @@ class InferencePipeline(Pipeline, Tool):
     def setup_model(self):
         self.model = self.task.get_model_wrapper(self.cfg.model, None)
         self.featurizer, self.collator = self.model.get_featurizer()
-        state_dict = torch.load(open(self.cfg.model_ckpt, "rb"), map_location="cpu")
-        if "state_dict" in state_dict:
-            state_dict = state_dict["state_dict"]
-        if hasattr(self.model.model, "load_ckpt"):
-            self.model.model.load_ckpt(state_dict)
-        else:
-            self.model.load_state_dict(state_dict, strict=False)
+        if os.path.isdir(self.cfg.model_ckpt):
+            logging.info(f"Loading model from {self.cfg.model_ckpt}")
+            state_dict = torch.load(open(self.cfg.model_ckpt, "rb"), map_location="cpu")
+            if "state_dict" in state_dict:
+                state_dict = state_dict["state_dict"]
+            if hasattr(self.model.model, "load_ckpt"):
+                self.model.model.load_ckpt(state_dict)
+            else:
+                self.model.load_state_dict(state_dict, strict=False)
         self.model.model.eval()
         self.model.to(self.cfg.device)
 
@@ -321,7 +332,7 @@ class InferencePipeline(Pipeline, Tool):
                         else:
                             raise e
             batch_size = self.best_batch_size
-        else:
+        elif batch_size == "max":
             batch_size = num_samples
         
         outputs = [None for i in range(num_samples)]
@@ -338,7 +349,7 @@ class InferencePipeline(Pipeline, Tool):
                         # Generation failure, restart
                         new_retry_idx.append(retry_idx[j])
                     else:
-                        outputs[i * batch_size + retry_idx[j]] = output
+                        outputs[retry_idx[j]] = output
                 retry_idx = new_retry_idx
                 retry_times += 1
 

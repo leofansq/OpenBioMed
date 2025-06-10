@@ -397,3 +397,135 @@ class GraphMVP(MoleculePropertyPredictionModel):
         pred = torch.sigmoid(pred)
         result_list = [[round(x.item(), 4) for x in row] for row in pred.cpu()]
         return result_list
+    
+
+# just regression version of GraphMVP
+class GraphMVPRegression(MoleculePropertyPredictionModel):
+    def __init__(self, model_cfg: Config) -> None:
+        super(GraphMVPRegression, self).__init__(model_cfg)
+        self.main_model = GNNGraphMVP(
+            num_layer=model_cfg["gin_num_layers"],
+            emb_dim=model_cfg["gin_hidden_dim"],
+            JK=model_cfg["JK"],
+            drop_ratio=model_cfg["drop_ratio"],
+            gnn_type=model_cfg["gnn_type"]
+        )
+
+        if model_cfg["gin_num_layers"] < 2:
+            raise ValueError("# layers must > 1.")
+
+        self.num_layer = model_cfg["gin_num_layers"]
+        self.emb_dim = model_cfg["gin_hidden_dim"]
+        self.JK = model_cfg["JK"]
+
+        # Different kind of graph pooling
+        if model_cfg["graph_pooling"] == "sum":
+            self.pool = global_add_pool
+        elif model_cfg["graph_pooling"] == "mean":
+            self.pool = global_mean_pool
+        elif model_cfg["graph_pooling"] == "max":
+            self.pool = global_max_pool
+        else:
+            raise ValueError("Invalid graph pooling type.")
+
+        # For graph-level binary classification
+        self.mult = 1
+
+        if self.JK == "concat":
+            self.graph_pred_linear = nn.Linear(self.mult * (self.num_layer + 1) * self.emb_dim,
+                                               self.num_tasks)
+        else:
+            self.graph_pred_linear = nn.Linear(self.mult * self.emb_dim, self.num_tasks)
+
+        self.criterion = nn.MSELoss(reduction='none')
+        # self.criterion = nn.L1Loss(reduction='none')
+        # self.criterion = nn.HuberLoss(reduction='none', delta=10)
+  
+        self.featurizers = {
+            "molecule": MolGraphFeaturizer(
+                {'name': 'BaseGNN'}
+            ),
+            "classlabel": ClassLabelFeaturizer()
+        }
+        self.collators = {
+            #"molecule": DPCollator({'modality': ['structure'], 'featurizer': {'structure': {'name': 'BaseGNN'}}}),
+            "molecule": DPCollator(),
+            "classlabel": ClassLabelCollator()
+        }
+
+        for parent in reversed(type(self).__mro__[1:-1]):
+          if hasattr(parent, '_add_task'):
+              parent._add_task(self)
+
+
+
+    def from_pretrained(self, model_file):
+        self.main_model.load_state_dict(torch.load(model_file))
+        return
+
+    def get_graph_representation(self, *argv):
+        if len(argv) == 4:
+            x, edge_index, edge_attr, batch = argv[0], argv[1], argv[2], argv[3]
+        elif len(argv) == 1:
+            data = argv[0]
+            x, edge_index, edge_attr, batch = data.x, data.edge_index, \
+                                              data.edge_attr, data.batch
+        else:
+            raise ValueError("unmatched number of arguments.")
+
+        node_representation = self.molecule_model(x, edge_index, edge_attr)
+        graph_representation = self.pool(node_representation, batch)
+        pred = self.graph_pred_linear(graph_representation)
+
+        return graph_representation, pred
+
+    def encode_mol(self, *argv):
+        if len(argv) == 4:
+            x, edge_index, edge_attr, batch = argv[0], argv[1], argv[2], argv[3]
+        elif len(argv) == 1:
+            data = argv[0]
+            x, edge_index, edge_attr, batch = data.x, data.edge_index, \
+                                              data.edge_attr, data.batch
+        else:
+            raise ValueError("unmatched number of arguments.")
+
+        node_representation = self.main_model(x, edge_index, edge_attr)
+        graph_representation = self.pool(node_representation, batch)
+        output = self.graph_pred_linear(graph_representation)
+
+        return output
+    
+    def load_state_dict(self, state_dict, strict=True):
+        return self.main_model.load_state_dict(state_dict, strict)
+
+    def forward_molecule_property_prediction(self,
+        molecule,
+        label 
+    ) -> Dict[str, torch.Tensor]:
+        # Whether y is non-null or not.
+        # Regression version
+        pred = self.encode_mol(molecule)  # Get predictions from model
+        y = label.view(pred.shape).to(torch.double)  # Ensure label matches prediction shape
+        
+        # Whether y is non-null or not (if you still need to handle missing values)
+        is_valid = ~torch.isnan(y)
+
+        # Use MSE loss for regression
+        loss_mat = self.criterion(pred.double(), y)
+        
+        # Handle invalid/missing targets if needed
+        loss_mat = torch.where(
+            is_valid, loss_mat,
+            torch.zeros(loss_mat.shape).to(loss_mat.device).to(loss_mat.dtype))
+        loss = torch.sum(loss_mat) / torch.sum(is_valid)
+        
+        return {"loss": loss}
+
+
+    @torch.no_grad()
+    def predict_molecule_property_prediction(self,
+        molecule
+    ) -> Dict[str, torch.Tensor]:
+        pred = self.encode_mol(molecule)
+        result_list = [[round(x.item(), 4) for x in row] for row in pred.cpu()]
+        return result_list

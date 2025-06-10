@@ -45,7 +45,7 @@ def visualize_complex_3D(
             for elem in config.molecule.__dict__.keys():
                 if elem not in ["show", "mode"]:
                     cmd.set(elem, config.molecule.__dict__[elem], "ligand")
-            cmd.orient("ligand")
+            # cmd.orient("ligand")
         if protein_file is not None:
             cmd.load(protein_file, "protein")
             cmd.hide("everything", "protein")
@@ -57,7 +57,7 @@ def visualize_complex_3D(
             cmd.color(getattr(config.protein, "color", "grey"), "protein")
             if getattr(config.protein, "cnc", False):
                 cmd.util.cnc("protein")
-            cmd.orient("protein")
+            #cmd.orient("protein")
 
         cmd.zoom("all")
         
@@ -153,14 +153,14 @@ class MoleculeVisualizer(Visualizer):
         molecule._add_name()
         if img_file is None:
             img_file_type = "png"
-            img_file = f"./tmp/{molecule.name}.{img_file_type}"
+            img_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp", f"{molecule.name}.{img_file_type}")
         if config is None:
             config = "2D"
         if isinstance(config, str):
-            cfg_path = f"./configs/visualization/molecule/{config}.yaml"
+            cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "configs", "visualization", "molecule", f"{config}.yaml")
             config = merge_config(
                 Config(cfg_path),
-                Config("./configs/visualization/global_config.yaml")
+                Config(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "configs", "visualization", "global_config.yaml"))
             )
         if config.molecule.mode == "3D":
             sdf_file = molecule.save_sdf(overwrite=True)
@@ -199,14 +199,14 @@ class ProteinVisualizer(Visualizer):
         if config is None:
             config = "cartoon"
         if isinstance(config, str):
-            cfg_path = f"./configs/visualization/protein/{config}.yaml"
+            cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "configs", "visualization", "protein", f"{config}.yaml")
             config = merge_config(
                 Config(cfg_path),
-                Config("./configs/visualization/global_config.yaml")
+                Config(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "configs", "visualization", "global_config.yaml"))
             )
 
         visualize_complex_3D(img_file, protein_file=pdb_file, config=config, rotate=rotate)
-        os.system("rm ./tmp/protein_to_visualize.pdb")
+        os.system(f"rm {os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'tmp', 'protein_to_visualize.pdb')}")
         return [os.path.abspath(img_file)], [os.path.abspath(img_file)]
 
 class ComplexVisualizer(Visualizer):
@@ -238,14 +238,14 @@ class ComplexVisualizer(Visualizer):
         if molecule_config is None:
             molecule_config = "ball_and_stick"
         if isinstance(molecule_config, str):
-            cfg_path = f"./configs/visualization/molecule/{molecule_config}.yaml"
+            cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "configs", "visualization", "molecule", f"{molecule_config}.yaml")
             molecule_config = Config(cfg_path)
         if protein_config is None:
             protein_config = "cartoon"
         if isinstance(protein_config, str):
-            cfg_path = f"./configs/visualization/protein/{protein_config}.yaml"
+            cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "configs", "visualization", "protein", f"{protein_config}.yaml")
             protein_config = Config(cfg_path)
-        config = merge_config(merge_config(molecule_config, protein_config), Config("./configs/visualization/global_config.yaml"))
+        config = merge_config(merge_config(molecule_config, protein_config), Config(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "configs", "visualization", "global_config.yaml")))
 
         visualize_complex_3D(img_file, ligand_file=sdf_file, protein_file=pdb_file, config=config, rotate=rotate)
 
@@ -306,6 +306,7 @@ if __name__ == "__main__":
             molecule_config=args.molecule_config,
             protein_config=args.protein_config,
             img_file=args.output_file,
+            rotate=False
         )[0]
     elif args.task == "visualize_protein_pocket":
         img_file = ProteinPocketVisualizer().run(

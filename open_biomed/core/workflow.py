@@ -104,106 +104,122 @@ def parse_frontend(json_string: str, output_floder: str = "tmp/workflow") -> str
         print("JSON successfully loaded！")
     except json.JSONDecodeError as e:
         print("JSON loading error", e)
-    tool_node = {}
-    createdata_node = {}
-    for node in node_edge_data["data"]["nodes"]:
-        if "ChatInput" in node["id"] or "ChatOutput" in node["id"] or "ParseData" in node["id"]:
-            continue
-        if "PharmolixCreateData" in node["id"]:
-            data = get_createdata_node(node)
-            createdata_node[node["id"]] = data
-        else:
-            data = get_tool_node(node)
-            tool_node[node["id"]] = data
+    try:
+        tool_node = {}
+        createdata_node = {}
+        nodes_data = node_edge_data["data"]["nodes"] if "data" in node_edge_data else node_edge_data["nodes"]
+        for node in nodes_data:
+            if "ChatInput" in node["id"] or "ChatOutput" in node["id"] or "ParseData" in node["id"]:
+                continue
+            if "PharmolixCreateData" in node["id"]:
+                data = get_createdata_node(node)
+                createdata_node[node["id"]] = data
+            else:
+                data = get_tool_node(node)
+                tool_node[node["id"]] = data
 
-    edge_list = []
-    for node in node_edge_data["data"]["edges"]:
-        source = node["source"]
-        target = node["target"]
-        if "PharmolixCreateData" in source:
-            tool_node[target]["value"] = createdata_node[source]["value"]
-            edge_list.append([source, target])
-        else:
-            edge_list.append([source, target])
+        edge_list = []
+        edges_data = node_edge_data["data"]["edges"] if "data" in node_edge_data else node_edge_data["edges"]
+        for node in edges_data:
+            source = node["source"]
+            target = node["target"]
+            if "PharmolixCreateData" in source:
+                tool_node[target]["value"] = createdata_node[source]["value"]
+                edge_list.append([source, target])
+            else:
+                edge_list.append([source, target])
 
-    path_nodes = copy.deepcopy(edge_list)
-    path_nodes, new_path_nodes = merge_nodes(path_nodes)
+        path_nodes = copy.deepcopy(edge_list)
+        path_nodes, new_path_nodes = merge_nodes(path_nodes)
 
-    # get value for tools after merge
-    for node in new_path_nodes:
-        source = node[0]
-        target = node[1]
-        if "PharmolixCreateData" in source:
-            tool_node[target]["value"] = createdata_node[source]["value"]
+        # get value for tools after merge
+        for node in new_path_nodes:
+            source = node[0]
+            target = node[1]
+            if "PharmolixCreateData" in source:
+                tool_node[target]["value"] = createdata_node[source]["value"]
 
-    merge_nodes_list = path_nodes + new_path_nodes
+        merge_nodes_list = path_nodes + new_path_nodes
 
-    # remove paths containing path_keywords
-    path_keywords = ["MergeDataComponent", "ParseData", "ChatOutput", "ChatInput", "Image Output", "PharmolixCreateData", "Image output"]
-    merge_nodes_list_copy = copy.deepcopy(merge_nodes_list)
-    for index in range(len(merge_nodes_list_copy) - 1, -1, -1):
-        # print(index)
-        value = merge_nodes_list_copy[index]
-        if any(keyword in value[0] for keyword in path_keywords) or any(keyword in value[1] for keyword in path_keywords):
-            merge_nodes_list.pop(index)
+        # remove paths containing path_keywords
+        path_keywords = ["MergeDataComponent", "ParseData", "ChatOutput", "ChatInput", "Image Output", "PharmolixCreateData", "Image output"]
+        merge_nodes_list_copy = copy.deepcopy(merge_nodes_list)
+        for index in range(len(merge_nodes_list_copy) - 1, -1, -1):
+            # print(index)
+            value = merge_nodes_list_copy[index]
+            if any(keyword in value[0] for keyword in path_keywords) or any(keyword in value[1] for keyword in path_keywords):
+                merge_nodes_list.pop(index)
 
-    # get tool nodes info
-    tool_node_filted = {}
-    key_list = []
-    for key, value in tool_node.items():
-        if not any(keyword in key for keyword in path_keywords):
-            tool_node_filted[key] = value
-            key_list.append(key)
+        # get tool nodes info
+        tool_node_filted = {}
+        key_list = []
+        for key, value in tool_node.items():
+            if not any(keyword in key for keyword in path_keywords):
+                tool_node_filted[key] = value
+                key_list.append(key)
 
-    # get the list of node in paths
-    path_nodes_list = []
-    for i in merge_nodes_list:
-        path_nodes_list.append(i[0])
-        path_nodes_list.append(i[1])
-    path_nodes_list = list(set(path_nodes_list))
+        # get the list of node in paths
+        path_nodes_list = []
+        for i in merge_nodes_list:
+            path_nodes_list.append(i[0])
+            path_nodes_list.append(i[1])
+        path_nodes_list = list(set(path_nodes_list))
 
-    assert len(path_nodes_list) == len(key_list), "please check the frontend json file"
+        assert len(path_nodes_list) == len(key_list), "please check the frontend json file"
 
-    yaml_dict = {}
-    yaml_dict["tools"] = []
-    yaml_dict["edges"] = []
-    for node in path_nodes_list:
-        node_info = tool_node_filted[node]
-        if 'value' in node_info.keys() and node_info["value"]:
-            yaml_dict["tools"].append({"name": node.split("-")[0].lower(), "inputs": node_info["value"]})
-        else:
-            yaml_dict["tools"].append({"name": node.split("-")[0].lower()})
+        yaml_dict = {}
+        yaml_dict["tools"] = []
+        yaml_dict["edges"] = []
+        for node in path_nodes_list:
+            node_info = tool_node_filted[node]
+            if 'value' in node_info.keys() and node_info["value"]:
+                yaml_dict["tools"].append({"name": node.split("-")[0].lower(), "inputs": node_info["value"]})
+            else:
+                yaml_dict["tools"].append({"name": node.split("-")[0].lower()})
 
-    for path in merge_nodes_list:
-        yaml_dict["edges"].append({"start": path_nodes_list.index(path[0]), "end": path_nodes_list.index(path[1])})
+        for path in merge_nodes_list:
+            yaml_dict["edges"].append({"start": path_nodes_list.index(path[0]), "end": path_nodes_list.index(path[1])})
 
-    
-    # param_mapping
-    # TODO: hard code
-    for node in yaml_dict["tools"]:
-        if "inputs" in node and "model" in list(node["inputs"].keys()):
-            node["inputs"].pop("model")
-        if node["name"] in param_mapping:
-            print(node["name"])
-            for key in list(node["inputs"].keys()):
-                if key in param_mapping[node["name"]]:
-                    new_key = param_mapping[node["name"]][key]
-                    node["inputs"][new_key] = node["inputs"].pop(key)
+        
+        # param_mapping
+        # TODO: hard code
+        for node in yaml_dict["tools"]:
+            if "inputs" in node and "model" in list(node["inputs"].keys()):
+                node["inputs"].pop("model")
+            if node["name"] in param_mapping:
+                print(node["name"])
+                for key in list(node["inputs"].keys()):
+                    if key in param_mapping[node["name"]]:
+                        new_key = param_mapping[node["name"]][key]
+                        node["inputs"][new_key] = node["inputs"].pop(key)
 
-    
-    if not os.path.exists(output_floder):
-        os.makedirs(output_floder)
+        
+        if not os.path.exists(output_floder):
+            os.makedirs(output_floder)
 
-    #file_name_with_extension = os.path.basename(file_path)
-    #file_name_without_extension = os.path.splitext(file_name_with_extension)[0]
-    uid = str(uuid.uuid4())
-    output_path = os.path.join(output_floder, f"{uid}.yaml")
+        #file_name_with_extension = os.path.basename(file_path)
+        #file_name_without_extension = os.path.splitext(file_name_with_extension)[0]
+        uid = str(uuid.uuid4())
+        output_path = os.path.join(output_floder, f"{uid}.yaml")
 
-    with open(output_path, "w", encoding="utf-8") as file:
-        yaml.dump(yaml_dict, file, allow_unicode=True, sort_keys=False)
+        with open(output_path, "w", encoding="utf-8") as file:
+            yaml.dump(yaml_dict, file, allow_unicode=True, sort_keys=False)
 
-    print(f"yaml file has been saved to {output_path}")
-    return output_path
+        # node_edge_data saved as json file
+        with open(output_path.replace(".yaml", ".json"), "w", encoding="utf-8") as file:
+            json.dump(node_edge_data, file, ensure_ascii=False, indent=4)
+
+        print(f"yaml file has been saved to {output_path}")
+        return output_path
+    except Exception as e:
+        print("Error:", e)
+        print("Please ensure that your workflow can run successfully before submitting")
+        uid = str(uuid.uuid4())
+        output_path = os.path.join(output_floder, f"{uid}.json")
+        with open(output_path, "w", encoding="utf-8") as file:
+            json.dump(node_edge_data, file, ensure_ascii=False, indent=4)
+        print(output_path)
+        return "Please ensure that your workflow can run successfully before submitting"
 
 
 def get_str_from_dict(input: Dict[str, Any]) -> str:
@@ -281,7 +297,7 @@ class Workflow():
                                 elif key == "protein":
                                     vis_process.append(value.save_pdb())
                                 elif key == "pocket":
-                                    vis_process.append(alue.save_binary())
+                                    vis_process.append(value.save_binary())
                         subprocess.Popen(vis_process).communicate()
                         outputs = open("./tmp/visualization_file.txt", "r").read()
                         outputs = [outputs], [outputs]
@@ -322,6 +338,7 @@ class Workflow():
                 context.write("The workflow execution failed")
 
 if __name__ == "__main__":
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--workflow", type=str, default="stable_drug_design")
     parser.add_argument("--num_repeats", type=int, default=1)
@@ -332,9 +349,9 @@ if __name__ == "__main__":
     asyncio.run(workflow.run(num_repeats=args.num_repeats, context=open("./logs/workflow_outputs.txt", "w"), tool_outputs=open("./logs/workflow_tool_outputs.txt", "w")))
     # workflow.run(num_repeats=1)
     """
-    file_path = "configs/workflow/demo.json"
+    file_path = "configs/workflow/yuandong-0404.json"
     with open(file_path, "r") as f:
         json_data = json.load(f)
-    json_string = json.dumps(json_data, ensure_ascii=False, indent=4)
+    json_string = json.dumps(json_data, ensure_ascii=False, indent=4)  # if 
     fronted_file = parse_frontend(json_string)
-    """
+    

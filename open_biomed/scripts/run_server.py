@@ -5,8 +5,9 @@ import uvicorn
 import random
 import copy
 import asyncio
+import logging
 import subprocess
-from typing import Optional, List, Dict, Callable, Any
+from typing import Optional, List, Dict, Callable, Any, Literal
 
 # import function
 from open_biomed.data import Molecule, Text, Protein, Pocket
@@ -91,7 +92,7 @@ class TaskRequest(BaseModel):
     task: str
     model: Optional[str] = None
     config: Optional[str] = None
-    visualize_config: Optional[str] = None
+    visualize: Optional[str] = None
     molecule: Optional[str] = None
     protein: Optional[str] = None
     pocket: Optional[str] = None
@@ -100,6 +101,11 @@ class TaskRequest(BaseModel):
     query: Optional[str] = None
     mutation: Optional[str] = None
     indices: Optional[str] = None
+    property: Optional[Literal["QED", "SA", "LogP", "Lipinski"]] = None
+    molecule_1: Optional[str] = None
+    molecule_2: Optional[str] = None
+    similarity: Optional[float] = None
+    value: Optional[str] = None
 
 
 class SearchRequest(BaseModel):
@@ -180,7 +186,7 @@ def handle_visualize_molecule(request: TaskRequest, pipeline):
     vis_process = [
                     "python3", "./open_biomed/core/visualize.py", 
                     "--task", "visualize_molecule",
-                    "--molecule_config", request.visualize_config,
+                    "--molecule_config", request.visualize,
                     "--save_output_filename", "./tmp/molecule_visualization_file.txt",
                     "--molecule", request.molecule]
     subprocess.Popen(vis_process).communicate()
@@ -316,7 +322,7 @@ def handle_visualize_protein(request: TaskRequest, pipeline):
     vis_process = [
                     "python3", "./open_biomed/core/visualize.py", 
                     "--task", "visualize_protein",
-                    "--protein_config", request.config,
+                    "--protein_config", request.visualize,
                     "--save_output_filename", "./tmp/protein_visualization_file.txt",
                     "--protein", request.protein]
     subprocess.Popen(vis_process).communicate()
@@ -368,7 +374,21 @@ def handle_import_pocket(request: TaskRequest, pipeline):
     pockets, files = pipeline.run([protein], [indices])
     return {"task": request.task, "pocket": files[0], "pocket_preview": str(pockets[0])}
 
+# 25
+def handle_molecule_similarity(request: TaskRequest, pipeline):
+    required_inputs = ["molecule_1", "molecule_2"]
+    molecule_1 = IO_Reader.get_molecule(request.molecule_1)
+    molecule_2 = IO_Reader.get_molecule(request.molecule_2)
+    outputs = pipeline.run(molecule_1=molecule_1, molecule_2=molecule_2)
+    return {"task": request.task, "model":request.model, "similarity": outputs}
 
+# 26
+def handle_molecule_property_calculation(request: TaskRequest, pipeline):
+    required_inputs = ["molecule", "property"]
+    molecule = IO_Reader.get_molecule(request.molecule)
+    property = request.property
+    outputs = pipeline.run(molecule=molecule, property=property)
+    return {"task": request.task, "model":request.model, "score": round(outputs, 5)}
 
 
 TASK_CONFIGS = [
@@ -402,7 +422,7 @@ TASK_CONFIGS = [
     },
     {
         "task_name": "visualize_molecule",
-        "required_inputs": ["visualize_config", "molecule"],
+        "required_inputs": ["visualize", "molecule"],
         "pipeline_key": "visualize_molecule",
         "handler_function": handle_visualize_molecule,
         "is_async": False
@@ -416,7 +436,7 @@ TASK_CONFIGS = [
     },
     {
         "task_name": "visualize_protein",
-        "required_inputs": ["protein"],
+        "required_inputs": ["visualize", "protein"],
         "pipeline_key": "visualize_protein",
         "handler_function": handle_visualize_protein,
         "is_async": False
@@ -532,6 +552,20 @@ TASK_CONFIGS = [
         "pipeline_key": "import_pocket",
         "handler_function": handle_import_pocket,
         "is_async": False
+    },
+    {
+        "task_name": "molecule_similarity", # 25
+        "required_inputs": ["molecule_1", "molecule_2"],
+        "pipeline_key": "molecule_similarity",
+        "handler_function": handle_molecule_similarity,
+        "is_async": False
+    },
+    {
+        "task_name": "molecule_property_calculation", # 25
+        "required_inputs": ["molecule", "property"],
+        "pipeline_key": "molecule_property_calculation",
+        "handler_function": handle_molecule_property_calculation,
+        "is_async": False
     }
     
 
@@ -555,7 +589,7 @@ for task_config in TASK_CONFIGS:
 @app.post("/run_pipeline/")
 async def run_pipeline(request: TaskRequest):
     task_name = request.task.lower()
-
+    logging.info(request)
     try:
         task_config = task_loader.get_task(task_name)
         task_config.validate_inputs(request.model_dump())
@@ -585,6 +619,10 @@ async def web_search(request: SearchRequest):
         print(e)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/healthz")
+def ping():
+    return "Service available"
 
 
 if __name__ == "__main__":

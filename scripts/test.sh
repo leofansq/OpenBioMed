@@ -9,5 +9,6 @@ python open_biomed/scripts/train.py \
 --additional_config_file configs/model/$MODEL.yaml \
 --dataset_name $DATASET \
 --dataset_path ./datasets/$TASK/$DATASET \
---test_only \
---ckpt_path ./logs/text_based_molecule_editing/molt5-fs_mol_edit/train/checkpoints/last.ckpt
+--ckpt_path ./checkpoints/server/pharmolix_fm.ckpt \
+--batch_size_eval 32 \
+--test_only

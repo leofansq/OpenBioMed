@@ -3,18 +3,24 @@ from typing_extensions import Self
 
 import copy
 from datetime import datetime
+import gzip
+import math
 import numpy as np
 import os
 import pickle
 from rdkit import Chem, DataStructs, RDLogger
 RDLogger.DisableLog("rdApp.*")
-from rdkit.Chem import AllChem, MACCSkeys
+from rdkit.Chem import AllChem, MACCSkeys, rdMolDescriptors, Descriptors, Lipinski
 from rdkit.Chem.AllChem import RWMol
+from rdkit.six import iteritems
+from rdkit.six.moves import cPickle
 import re
 
 from open_biomed.core.tool import Tool
 from open_biomed.data.text import Text
 from open_biomed.utils.exception import MoleculeConstructError
+
+_fscores = None
 
 class Molecule:
     def __init__(self) -> None:
@@ -169,6 +175,45 @@ class Molecule:
     def get_num_atoms(self) -> None:
         self._add_rdmol()
         return self.rdmol.GetNumAtoms()
+    
+    def calc_qed(self) -> float:
+        try:
+            from rdkit.Chem.QED import qed
+            self._add_rdmol()
+            return qed(self.rdmol)
+        except Exception:
+            return 0.0
+
+    def calc_sa(self) -> float:
+        self._add_rdmol()
+        sa = calc_sa_score(self.rdmol)
+        sa_norm = round((10 - sa) / 9, 2)
+        return sa_norm
+
+    def calc_logp(self) -> float:
+        from rdkit.Chem.Crippen import MolLogP
+        self._add_rdmol()
+        return MolLogP(self.rdmol)
+
+    def calc_lipinski(self) -> float:
+        try:
+            self._add_rdmol()
+            mol = copy.deepcopy(self.rdmol)
+            Chem.SanitizeMol(mol)
+            rule_1 = Descriptors.ExactMolWt(mol) < 500
+            rule_2 = Lipinski.NumHDonors(mol) <= 5
+            rule_3 = Lipinski.NumHAcceptors(mol) <= 10
+            logp = self.calc_logp()
+            rule_4 = (logp >= -2) & (logp <= 5)
+            rule_5 = Chem.rdMolDescriptors.CalcNumRotatableBonds(mol) <= 10
+            return np.sum([int(a) for a in [rule_1, rule_2, rule_3, rule_4, rule_5]])
+        except Exception:
+            return 0.0
+
+    def calc_distance(self) -> float:
+        self._add_conformer()
+        pdist = self.conformer[None, :] - self.conformer[:, None]
+        return np.sqrt(np.sum(pdist ** 2, axis=-1))
 
     def __str__(self) -> str:
         return self.smiles
@@ -204,32 +249,213 @@ def check_identical_molecules(mol1: Molecule, mol2: Molecule) -> bool:
     except Exception:
         return False
 
-def fix_valence(mol: Chem.RWMol) -> Tuple[Chem.RWMol, bool]:
-    # Fix valence erros in a molecule by adding electrons to N
-    mol = copy.deepcopy(mol)
-    fixed = False
-    cnt_loop = 0
-    while True:
-        try:
-            Chem.SanitizeMol(copy.deepcopy(mol))
-            fixed = True
-            Chem.SanitizeMol(mol)
-            break
-        except Chem.rdchem.AtomValenceException as e:
-            err = e
-        except Exception as e:
-            return mol, False # from HERE: rerun sample
-        cnt_loop += 1
-        if cnt_loop > 100:
-            break
-        N4_valence = re.compile(u"Explicit valence for atom # ([0-9]{1,}) N, 4, is greater than permitted")
-        index = N4_valence.findall(err.args[0])
-        if len(index) > 0:
-            mol.GetAtomWithIdx(int(index[0])).SetFormalCharge(1)
-    return mol, fixed
-
 def mol_array_to_conformer(conf: np.ndarray) -> Chem.Conformer:
     new_conf = Chem.Conformer(conf.shape[0])
     for i in range(conf.shape[0]):
         new_conf.SetAtomPosition(i, tuple(conf[i]))
     return new_conf
+
+#
+#  Copyright (c) 2013, Novartis Institutes for BioMedical Research Inc.
+#  All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met: 
+#
+#     * Redistributions of source code must retain the above copyright 
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above
+#       copyright notice, this list of conditions and the following 
+#       disclaimer in the documentation and/or other materials provided 
+#       with the distribution.
+#     * Neither the name of Novartis Institutes for BioMedical Research Inc. 
+#       nor the names of its contributors may be used to endorse or promote 
+#       products derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+def calc_sa_score(molecule: Chem.RWMol) -> float:
+    global _fscores
+    if _fscores is None:
+        fpscores_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "configs", "molecule", "fpscores.pkl.gz")
+        data = cPickle.load(gzip.open(fpscores_file, "rb"))
+        _fscores = {}
+        for i in data:
+            for j in range(1, len(i)):
+                _fscores[i[j]] = float(i[0])
+
+    # fragment score
+    fp = rdMolDescriptors.GetMorganFingerprint(molecule, 2)  #<- 2 is the *radius* of the circular fingerprint
+    fps = fp.GetNonzeroElements()
+    score1 = 0.
+    nf = 0
+    for bitId, v in iteritems(fps):
+        nf += v
+        sfp = bitId
+        score1 += _fscores.get(sfp, -4) * v
+    score1 /= nf
+
+    # features score
+    nAtoms = molecule.GetNumAtoms()
+    nChiralCenters = len(Chem.FindMolChiralCenters(molecule, includeUnassigned=True))
+    ri = molecule.GetRingInfo()
+    nBridgeheads = rdMolDescriptors.CalcNumBridgeheadAtoms(molecule)
+    nSpiro = rdMolDescriptors.CalcNumSpiroAtoms(molecule)
+    nMacrocycles = 0
+    for x in ri.AtomRings():
+        if len(x) > 8:
+            nMacrocycles += 1
+
+    sizePenalty = nAtoms**1.005 - nAtoms
+    stereoPenalty = math.log10(nChiralCenters + 1)
+    spiroPenalty = math.log10(nSpiro + 1)
+    bridgePenalty = math.log10(nBridgeheads + 1)
+    macrocyclePenalty = 0.
+    # ---------------------------------------
+    # This differs from the paper, which defines:
+    #  macrocyclePenalty = math.log10(nMacrocycles+1)
+    # This form generates better results when 2 or more macrocycles are present
+    if nMacrocycles > 0:
+        macrocyclePenalty = math.log10(2)
+
+    score2 = 0. - sizePenalty - stereoPenalty - spiroPenalty - bridgePenalty - macrocyclePenalty
+
+    # correction for the fingerprint density
+    # not in the original publication, added in version 1.1
+    # to make highly symmetrical molecules easier to synthetise
+    score3 = 0.
+    if nAtoms > len(fps):
+        score3 = math.log(float(nAtoms) / len(fps)) * .5
+
+    sascore = score1 + score2 + score3
+
+    # need to transform "raw" value into scale between 1 and 10
+    min = -4.0
+    max = 2.5
+    sascore = 11. - (sascore - min + 1) / (max - min) * 9.
+    # smooth the 10-end
+    if sascore > 8.:
+        sascore = 8. + math.log(sascore + 1. - 9.)
+    if sascore > 10.:
+        sascore = 10.0
+    elif sascore < 1.:
+        sascore = 1.0
+
+    return sascore
+
+def calc_mol_diversity(mols: List[Molecule]) -> float:
+    # Calculate the diversity of a list of molecules
+    # Use the fingerprint similarity to calculate the diversity
+    # The diversity is the average of the fingerprint similarity of all pairs of molecules
+    dists = []
+    for i in range(len(mols)):
+        for j in range(i + 1, len(mols)):
+            mol1 = mols[i]
+            mol2 = mols[j]
+            mol1._add_rdmol()
+            mol2._add_rdmol()
+            dists.append(1 - molecule_fingerprint_similarity(mol1, mol2, fingerprint_type="rdkit"))
+    return np.mean(dists)
+
+def calc_mol_rmsd(mol1: Molecule, mol2: Molecule) -> float:
+    # Calculate the RMSD of two molecules
+    try:
+        if mol1.conformer is None or mol2.conformer is None:
+            raise ValueError("Conformer is not available for RMSD calculation")
+        assert mol1.get_num_atoms() == mol2.get_num_atoms(), "The number of atoms of two molecules must be the same!"
+        mol1._add_rdmol()
+        mol2._add_rdmol()
+        return Chem.rdMolAlign.CalcRMS(mol1.rdmol, mol2.rdmol, maxMatches=30000)
+    except Exception:
+        return 1e4
+
+class MoleculeQEDTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def print_usage(self) -> str:
+        return "Calculate the drug-likeness (QED score) of a molecule"
+
+    def run(self, molecule: Molecule) -> float:
+        return molecule.calc_qed()
+
+class MoleculeSATool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def print_usage(self) -> str:
+        return "Calculate the synthetic accessibility (SA score) of a molecule"
+
+    def run(self, molecule: Molecule) -> float:
+        return molecule.calc_sa()
+
+class MoleculeLogPTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def print_usage(self) -> str:
+        return "Calculate the solubility (LogP score) of a molecule"
+
+    def run(self, molecule: Molecule) -> float:
+        return molecule.calc_logp()
+
+class MoleculeLipinskiTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def print_usage(self) -> str:
+        return "Calculate the number of lipinski rules that a molecule satisfies"
+
+    def run(self, molecule: Molecule) -> float:
+        return molecule.calc_lipinski()
+
+
+class MoleculePropertyCalculationTool:
+    def __init__(self):
+        """
+        Initialize the calculator with a mapping of property names to their corresponding tool classes.
+        """
+        # Map property names to their corresponding tool classes
+        self.tool_map = {
+            "QED": MoleculeQEDTool,
+            "SA": MoleculeSATool,
+            "LogP": MoleculeLogPTool,
+            "Lipinski": MoleculeLipinskiTool,
+        }
+
+    def run(self, molecule: Molecule, property: str) -> float:
+        """
+        Calculate the specified property for the given molecule using the appropriate tool.
+
+        :param molecule: The molecule object to calculate the property for.
+        :param property: The name of the property to calculate (e.g., "QED", "SA", "LogP", "Lipinski").
+        :return: The calculated property value.
+        """
+        if property not in self.tool_map:
+            raise ValueError(f"Unknown property: {property}")
+
+        tool_class = self.tool_map[property]
+        tool_instance = tool_class()
+        return tool_instance.run(molecule)
+
+class MoleculeSimilarityTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def print_usage(self) -> str:
+        return "Calculate the Morgan fingerprint similarity of two molecules"
+
+    def run(self, molecule_1: Molecule, molecule_2: Molecule) -> float:
+        return molecule_fingerprint_similarity(molecule_1, molecule_2, fingerprint_type="morgan")
+        

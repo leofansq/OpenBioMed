@@ -3,6 +3,7 @@ from open_biomed.core.web_request import *
 from open_biomed.core.visualize import *
 from open_biomed.core.third_party_server import *
 from open_biomed.core.llm_request import KeyInfoExtractor
+from open_biomed.data.molecule import *
 from open_biomed.scripts.inference import *
 
 
@@ -60,6 +61,18 @@ class LazyDictForTool(dict):
             self[key] = ExportMolecule()
         elif key == "export_protein":
             self[key] = ExportProtein()
+        elif key == "molecule_qed":
+            self[key] = MoleculeQEDTool()  # TODO
+        elif key == "molecule_sa":
+            self[key] = MoleculeSATool()
+        elif key == "molecule_logp":
+            self[key] = MoleculeLogPTool()
+        elif key == "molecule_lipinski":
+            self[key] = MoleculeLipinskiTool()
+        elif key == "molecule_property_calculation":
+            self[key] = MoleculePropertyCalculationTool()
+        elif key == "molecule_similarity":
+            self[key] = MoleculeSimilarityTool()
         else:
             raise NotImplementedError(f"{key} is currently not supported!")
         return self[key]

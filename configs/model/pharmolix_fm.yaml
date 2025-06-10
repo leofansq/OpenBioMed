@@ -33,3 +33,11 @@ model:
   num_sample_steps: 100
   sigma1: 0.03
   beta1: 1.5
+
+dataset:
+  pocket_only: true
+  debug: true
+
+evaluation:
+  batch_size: 32
+  num_test_repeats: 50

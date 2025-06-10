@@ -43,13 +43,13 @@ class Pocket:
 
     @classmethod
     def from_protein_ref_ligand(cls, protein: Protein, ligand: Molecule, radius: float=10.0) -> Self:
-        sel_idx = set()
+        sel_idx = []
         for pos in ligand.conformer:
             for i, residue in enumerate(protein.residues):
                 dist = np.linalg.norm(residue.center_of_mass - pos, ord=2, axis=-1)
                 if dist < radius and not i in sel_idx:
-                    sel_idx.add(i)
-        return Pocket.from_protein_subseq(protein, list(sel_idx))
+                    sel_idx.append(i)
+        return Pocket.from_protein_subseq(protein, sel_idx)
 
     @classmethod
     def from_protein_subseq(cls, protein: Protein, indices: List[int]) -> Self:
@@ -70,8 +70,18 @@ class Pocket:
         return pickle.load(open(file, "rb"))
 
     @classmethod
-    def from_pdb_file(cls, pdb: str) -> Self:
-        raise NotImplementedError
+    def from_pdb_file(cls, pdb_file: str, removeHs: bool=True) -> Self:
+        protein = Protein.from_pdb_file(pdb_file, removeHs=removeHs)
+        pocket = cls.from_protein_subseq(protein, list(range(len(protein.residues))))
+        pocket.orig_protein = protein
+        return pocket
+    
+    def save_pdb(self, file: Optional[str]=None, overwrite: bool=False) -> str:
+        if file is None:
+            self._add_name()
+            file = f"./tmp/{self.name}.pdb"
+
+        return self.orig_protein.save_pdb(file, overwrite, self.orig_indices)
 
     def _add_name(self) -> None:
         if self.name is None:
@@ -85,6 +95,9 @@ class Pocket:
         if not os.path.exists(file) or overwrite:
             pickle.dump(self, open(file, "wb"))
         return file
+    
+    def get_num_atoms(self) -> int:
+        return len(self.atoms)
 
     def __str__(self) -> str:
         if self.orig_protein is not None:
@@ -93,6 +106,8 @@ class Pocket:
             return "A pocket"
 
 def estimate_ligand_atom_num(pocket: Pocket) -> int:
+    if hasattr(pocket, "estimated_num_atoms"):
+        return pocket.estimated_num_atoms
     dist = spatial.distance.pdist(pocket.conformer, metric='euclidean')
     dist = np.sort(dist)[::-1]
     space_size = np.median(dist[:10])

@@ -41,5 +41,11 @@ async def run_workflow(request: ReportRequest):
         print(e)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/healthz")
+def ping():
+    return "Service available"
+    
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8083, limit_concurrency=2)

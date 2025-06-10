@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from typing_extensions import Self
 
 from datetime import datetime
@@ -26,13 +26,15 @@ BACKBONE_NAMES = ["CA", "C", "N", "O"]
 
 ptable = Chem.GetPeriodicTable()
 
-def enumerate_pdb_lines(lines: list[str]) -> Dict[str, Any]:
+def enumerate_pdb_lines(lines: list[str]) -> Iterator[Dict[str, Any]]:
     # Load and parse lines within .pdb lines 
     for line in lines:
         if line[0:6].strip() == 'ATOM':
             element_symb = line[76:78].strip().capitalize()
             if len(element_symb) == 0:
                 element_symb = line[13:14]
+            if element_symb == 'D':
+                element_symb = 'H'
             yield {
                 'line': line,
                 'type': 'ATOM',
@@ -156,7 +158,7 @@ class Protein(dict):
     @classmethod
     def from_pdb_file(cls, pdb_file: str, removeHs: bool=True) -> Self:
         # initialize a protein with a pdb file
-        protein = Protein.from_pdb(open(pdb_file, "r").readlines())
+        protein = Protein.from_pdb(open(pdb_file, "r").readlines(), removeHs=removeHs)
         protein.name = pdb_file.split("/")[-1].rstrip(".pdb")
         return protein
 
@@ -213,7 +215,7 @@ class Protein(dict):
             pickle.dump(self, open(file, "wb"))
         return file
 
-    def save_pdb(self, file: Optional[str]=None, overwrite: bool=False) -> str:
+    def save_pdb(self, file: Optional[str]=None, overwrite: bool=False, residue_indices: Optional[List[int]]=None) -> str:
         # Save the protein as a pdb file
         if file is None:
             self._add_name()
@@ -222,11 +224,14 @@ class Protein(dict):
         if not os.path.exists(file) or overwrite:
             atom_cnt = 0
             with open(file, "w") as f:
-                for residue in self.residues:
+                for i, residue in enumerate(self.residues):
+                    if residue_indices is not None and i not in residue_indices:
+                        continue
                     for atom_id in residue.atoms:
                         atom = self.all_atom[atom_id]
                         atom_cnt += 1
-                        f.write(f"ATOM  {atom_cnt:5}  {atom['atom_name']:<3} {residue.name:3} {residue.chain:1}{residue.res_id:4}{residue.res_insert_id:1}   {atom['pos'][0]:8.3f}{atom['pos'][1]:8.3f}{atom['pos'][2]:8.3f}{atom.get('occupancy', 1.00):6.2f}{atom.get('temp_factor', 0.00):6.2f}           {atom['atom_name'][0]}\n")
+                        atom_name = f"  {atom['atom_name']:<3}" if len(atom['atom_name']) <= 3 else f" {atom['atom_name']:<4}"
+                        f.write(f"ATOM  {atom_cnt:5}" + atom_name + f" {residue.name:3} {residue.chain:1}{residue.res_id:4}{residue.res_insert_id:1}   {atom['pos'][0]:8.3f}{atom['pos'][1]:8.3f}{atom['pos'][2]:8.3f}{atom.get('occupancy', 1.00):6.2f}{atom.get('temp_factor', 0.00):6.2f}           {atom['atom_name'][0]}\n")
         return file
 
     def __len__(self) -> int:

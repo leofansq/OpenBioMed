@@ -19,14 +19,15 @@ Feel free to use our **Agent Platform for Biomedicine and Life Science** at this
 
 ## News 🎉
 
+- [2025/05/26] 🔥 Our framework has been updated with several new features including new tools, datasets, and models. We implement **LangCell** (📃[Paper](https://arxiv.org/abs/2405.06708), 🤖[Model](https://drive.google.com/drive/folders/1cuhVG9v0YoAnjW-t_WMpQQguajumCBTp?usp=sharing), 📎[Citation](#to-cite-langcell)) and APIs to manipulate cells (See [the Example](./examples/cell_annotation.ipynb)). We also introduce a wider range of tools to calculate molecular properties (ADMET, QED, SA, LogP, Lipinski, Similarity, etc.). 
 
-- [2025/03/07] 🔥We present **OpenBioMed Agent Platform** at this [website](http://openbiomed.pharmolix.com) to customize workflows and LLM agents (**AutoPilots**) in solving complicated scientific research tasks. **Tutorials** for using this platform are also [available](https://www.zybuluo.com/icycookies/note/2587490).
-- [2025/03/07] 🔥 Released **OpenBioMed v2**. We present new features including additional downstream biomedical tasks, more flexible data APIs, and advanced models. We also release a preview version of **PharmolixFM** (📃[Paper](), 🤖[Model](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/), 📎[Citation](#to-cite-pharmolixfm)). BioMedGPT-R1 inference is currently supported, and fine-tuning will be available in this month!
+- [2025/03/07] 🔥 We present **OpenBioMed Agent Platform** at this [website](http://openbiomed.pharmolix.com) to customize workflows and LLM agents (**AutoPilots**) in solving complicated scientific research tasks. **Tutorials** for using this platform are also [available](https://www.zybuluo.com/icycookies/note/2587490).
+- [2025/03/07] 🔥 Released **OpenBioMed v2**. We present new features including additional downstream biomedical tasks, more flexible data APIs, and advanced models. We also release a preview version of **PharmolixFM** (📃[Paper](https://arxiv.org/abs/2503.21788), 🤖[Model](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/), 📎[Citation](#to-cite-pharmolixfm)). BioMedGPT-R1 inference is currently supported, and fine-tuning will be available in this month!
 
 > PharmolixFM is an all-atom molecular foundation model jointly released by PharMolix Inc. and Institute of AI Industry Research (AIR), Tsinghua University. It unifies molecules, antibodies, and proteins by jointly modeling them at atom-level with cutting-edge non-autoregressive multi-modal generative models. PharmolixFM is capable of solving mutiple downstream tasks such as docking, structure-based drug design, peptide design, and molecular conformation generation. PharmolixFM achieves competitive performance with AlphaFold3 (83.9 vs 90.2, RMSD < 2Å) on protein-molecule docking (given pocket).
 
 
-- [2025/02/20] 🔥 BioMedGPT-R1 (🤗[Huggingface Model](https://huggingface.co/PharMolix/BioMedGPT-R1)) has been released. 
+- [2025/02/20] BioMedGPT-R1 (🤗[Huggingface Model](https://huggingface.co/PharMolix/BioMedGPT-R1)) has been released. 
 
 > BioMedGPT-R1-17B is a multimodal biomedical reasoning model jointly released by PharMolix and Institute of AI Industry Research (AIR) . It updates the language model in last version with DeepSeek-R1-Distill-Qwen-14B and adopts two-stage training for cross-modal alignment and multimodal reasoning SFT, performing on par with commercial model on biomedical QA benchmark.
 
@@ -104,7 +105,7 @@ Here is a list of currently available tools. This is a continuing effort and we 
 |      Protein PDB Request       |                             N/A                              | Obtaining a protein structure from PDB/AlphaFoldDB based on PDB/AlphaFoldDB accession ID |
 |     Protein Visualization      |                             N/A                              |                     Visualize a protein                      |
 | Protein-molecule Rigid Docking | [PharmolixFM](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/) | Generate the binding pose of the molecule with a given pocket in a protein |
-|  Structure-based Drug Design   | [PharmolixFM](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/) | Generate a molecule that binds with a given pocket in a protein |
+|  Structure-based Drug Design   | [PharmolixFM](https://cloud.tsinghua.edu.cn/f/8f337ed5b58f45138659/), [MolCRAFT](https://github.com/AlgoMole/MolCRAFT) | Generate a molecule that binds with a given pocket in a protein |
 |     Complex Visualization      |                             N/A                              |             Visualize a protein-molecule complex             |
 |      Pocket Visualization      |                             N/A                              |             Visualize a pocket within a protein              |
 |          Web Request           |                             N/A                              |             Obtaining information by web search              |
@@ -138,13 +139,31 @@ pip install imageio
 pip install meeko==0.1.dev3 pdb2pqr vina==1.2.2 
 python -m pip install git+https://github.com/Valdes-Tresanco-MS/AutoDockTools_py3
 
+# For PoseBusters
+pip install posebusters==0.3.1
+
 # For overlap-based evaluation
 pip install spacy rouge_score nltk
 python
 >>> import nltk
 >>> nltk.download('wordnet')
 >>> nltk.download('omw-1.4')
+
+# For LangCell
+pip install geneformer
 ```
+
+After downloading the dependencies, you can run the following command to install the package and use our APIs more conveniently:
+
+```bash
+pip install -e .
+# Try using OpenBioMed APIs
+python
+>>> from open_biomed.data import Molecule
+>>> molecule = Molecule(smiles="CC(=O)OC1=CC=CC=C1C(=O)O")
+>>> print(molecule.calc_logp())
+```
+
 ### Build Docker
 
 Executing ./scripts/docker_run.sh directly will build the Docker image and run the container, launching the backend services on ports 8082 and 8083.
@@ -195,7 +214,7 @@ If you find our open-sourced code and models helpful to your research, please co
 
 ```
 @misc{OpenBioMed_code,
-      author={Luo, Yizhen and Yang, Kai and Fan, Siqi and Hong, Massimo and Nie, Zikun and Luo, Wen and Xie, Ailin and Liu, Xing Yi and Zhao, Suyuan and Zhang, Jiahuan and Wu, Yushuai and Nie, Zaiqing},
+      author={Luo, Yizhen and Yang, Kai and Fan, Siqi and Hong, Massimo and Zhao, Suyuan and Chen, Xinrui and Nie, Zikun and Luo, Wen and Xie, Ailin and Liu, Xing Yi and Zhang, Jiahuan and Wu, Yushuai and Nie, Zaiqing},
       title={Code of OpenBioMed},
       year={2023},
       howpublished={\url{https://github.com/Pharmolix/OpenBioMed.git}}
@@ -216,7 +235,12 @@ If you find our open-sourced code and models helpful to your research, please co
 
 ##### To cite PharmolixFM:
 
-Coming soon!
+@article{luo2025pharmolixfm,
+  title={PharMolixFM: All-Atom Foundation Models for Molecular Modeling and Generation},
+  author={Luo, Yizhen and Wang, Jiashuo and Fan, Siqi and Nie, Zaiqing},
+  journal={arXiv preprint arXiv:2503.21788},
+  year={2025}
+}
 
 ##### To cite MolFM:
 
